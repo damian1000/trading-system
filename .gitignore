@@ -1,0 +1,31 @@
+### Gradle ###
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+
+### VS Code ###
+.vscode/
+
+### Kotlin ###
+.kotlin/
+
+### Secrets ###
+.env
+.env.local
+*.pem
+*.ppk
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+**/keys/
+**/secrets/
+**/wallet/
