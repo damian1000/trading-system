@@ -1,0 +1,17 @@
+[Unit]
+Description=Positions, risk and PnL over the orderbook fill stream
+After=network.target
+
+[Service]
+Environment=JAVA_HOME=/opt/jdk25
+Environment=JAVA_OPTS=-Xmx128m
+# Box-local config: PORT, KAFKA_BOOTSTRAP_SERVERS, and the DB triple (required at startup).
+EnvironmentFile=/etc/trading-system/env
+ExecStart=/home/ubuntu/trading-system/bin/trading-system
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target

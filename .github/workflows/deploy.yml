@@ -1,0 +1,128 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One production deploy at a time; never cancel a release mid-flight.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Node # Prettier (web + config formatting) runs under Spotless
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # The deploy pipeline re-verifies the full gate before packaging — CD owns its own
+      # go/no-go rather than trusting a separate workflow, and ships the bytes it just tested.
+      - name: Build, test, and package the distribution
+        run: ./gradlew --no-daemon clean check installDist
+
+      - name: Package distribution
+        run: tar -czf trading-system-dist.tar.gz -C build/install trading-system
+
+      - name: Upload distribution
+        uses: actions/upload-artifact@v7
+        with:
+          name: trading-system-dist
+          path: trading-system-dist.tar.gz
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://trading.damianhoward.com
+    steps:
+      - uses: actions/checkout@v7 # for deploy/trading-system.service
+
+      - name: Download distribution
+        uses: actions/download-artifact@v8
+        with:
+          name: trading-system-dist
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Ship artifact and service unit
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key trading-system-dist.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/trading-system-dist.tar.gz"
+          scp -i ~/.ssh/deploy_key deploy/trading-system.service "$DEPLOY_USER@$DEPLOY_HOST:/tmp/trading-system.service"
+
+      - name: Release and restart
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -seuo pipefail' <<'REMOTE'
+          APP="$HOME/trading-system"
+
+          # Retain the current release for rollback, then unpack the new one in place.
+          rm -rf "$APP-prev"
+          [ -d "$APP" ] && cp -a "$APP" "$APP-prev"
+          tmp="$(mktemp -d)"
+          tar -xzf /tmp/trading-system-dist.tar.gz -C "$tmp"
+          mkdir -p "$APP"
+          rm -rf "$APP/bin" "$APP/lib"
+          cp -a "$tmp/trading-system/bin" "$tmp/trading-system/lib" "$APP/"
+          rm -rf "$tmp" /tmp/trading-system-dist.tar.gz
+
+          # Keep the host's unit in lockstep with the version-controlled one.
+          if ! cmp -s /tmp/trading-system.service /etc/systemd/system/trading-system.service; then
+            sudo cp /tmp/trading-system.service /etc/systemd/system/trading-system.service
+            sudo systemctl daemon-reload
+            sudo systemctl enable -q trading-system
+          fi
+          rm -f /tmp/trading-system.service
+
+          sudo systemctl restart trading-system
+          REMOTE
+
+      - name: Health check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -seuo pipefail' <<'REMOTE'
+          for attempt in $(seq 1 20); do
+            code="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8082/healthz || true)"
+            if [ "$code" = "200" ]; then
+              echo "healthy after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "health check failed (last status: ${code:-none})"
+          exit 1
+          REMOTE

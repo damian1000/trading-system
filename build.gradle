@@ -42,6 +42,8 @@ dependencies {
     implementation 'org.flywaydb:flyway-core:12.11.0'
     runtimeOnly 'org.flywaydb:flyway-database-oracle:12.11.0'
     runtimeOnly 'com.oracle.database.jdbc:ojdbc17:23.26.2.0.0'
+    // Reads the Autonomous DB's auto-login wallet (cwallet.sso) for mutual TLS.
+    runtimeOnly 'com.oracle.database.security:oraclepki:23.26.2.0.0'
     // kafka-clients and Flyway log via slf4j; a binding routes warnings to stderr -> journalctl.
     runtimeOnly 'org.slf4j:slf4j-simple:2.0.18'
 
