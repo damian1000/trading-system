@@ -8,6 +8,10 @@ consumes fills off Kafka, maintains net positions in an Oracle Autonomous Databa
 book through the [risk-engine](https://github.com/damian1000/risk-engine) library, and serves a
 live positions/risk/PnL dashboard.
 
+**▶ Live: https://trading.damianhoward.com** — submit an order that crosses on
+[the live order book](https://orderbook.damianhoward.com) and watch the position, valuation,
+VaR, and day PnL update here as the fill arrives.
+
 ```
 orderbook.fills (Kafka) ──► FillConsumer ──► TradeCapture ──► PositionBook ──► PositionStore (Oracle, Flyway)
                                  │                                  │
