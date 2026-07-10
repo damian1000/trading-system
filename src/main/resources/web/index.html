@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Trading System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">&#9670;</span> TRADING SYSTEM
+        <span class="eyebrow"
+          >positions &middot; risk &middot; pnl off the live fill stream</span
+        >
+      </div>
+    </header>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="k">Net Position</span
+        ><span class="v" id="st-position">&mdash;</span>
+      </div>
+      <div class="stat">
+        <span class="k">Last Price</span
+        ><span class="v" id="st-last">&mdash;</span>
+      </div>
+      <div class="stat">
+        <span class="k">Valuation</span
+        ><span class="v" id="st-valuation">&mdash;</span>
+      </div>
+      <div class="stat">
+        <span class="k">Day PnL</span><span class="v" id="st-pnl">&mdash;</span>
+      </div>
+    </div>
+
+    <main class="grid">
+      <section class="panel report" aria-labelledby="report-heading">
+        <h2 class="phead" id="report-heading">
+          Risk Report
+          <span class="sub">Greeks &middot; VaR/ES &middot; PnL</span>
+        </h2>
+        <div id="report" aria-live="polite"></div>
+      </section>
+
+      <aside class="side">
+        <section class="panel" aria-labelledby="positions-heading">
+          <h2 class="phead" id="positions-heading">
+            Positions
+            <span class="sub">taker side of each fill</span>
+          </h2>
+          <div id="positions" aria-live="polite"></div>
+        </section>
+        <section class="panel" aria-labelledby="session-heading">
+          <h2 class="phead" id="session-heading">Session</h2>
+          <div id="session"></div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span class="sb-item">stream <span id="stream">connecting</span></span>
+      <span class="sb-item">updates <span id="updates">0</span></span>
+      <span class="grow"></span>
+      <span class="sb-item tagline"
+        >fills consumed off Kafka &middot; repriced by risk-engine</span
+      >
+      <span class="sb-item">
+        <a
+          href="https://github.com/damian1000/trading-system"
+          target="_blank"
+          rel="noopener"
+        >
+          github.com/damian1000/trading-system
+        </a>
+      </span>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
