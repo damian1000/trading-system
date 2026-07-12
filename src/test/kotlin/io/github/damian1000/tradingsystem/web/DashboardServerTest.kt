@@ -4,6 +4,8 @@ import io.github.damian1000.orderbook.model.Side
 import io.github.damian1000.riskengine.report.RiskReportAssembler
 import io.github.damian1000.tradingsystem.capture.TradeCapture
 import io.github.damian1000.tradingsystem.consume.Fill
+import io.github.damian1000.tradingsystem.limits.LimitsReport
+import io.github.damian1000.tradingsystem.limits.RiskLimits
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
@@ -40,6 +42,7 @@ class DashboardServerTest {
             store = NoopStore(),
             risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
             broadcaster = broadcaster,
+            limitsView = { LimitsReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0) },
         )
     private val server = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0)
     private val client = HttpClient.newHttpClient()
@@ -85,6 +88,7 @@ class DashboardServerTest {
         assertEquals(200, response.statusCode())
         assertEquals("application/json", response.headers().firstValue("Content-Type").get())
         assertTrue(response.body().startsWith("""{"v":1,"positions":["""), response.body())
+        assertTrue(response.body().contains(""""limits":{"""), response.body())
     }
 
     @Test

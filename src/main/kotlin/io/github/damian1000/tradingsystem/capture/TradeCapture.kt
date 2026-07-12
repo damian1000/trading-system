@@ -1,6 +1,7 @@
 package io.github.damian1000.tradingsystem.capture
 
 import io.github.damian1000.tradingsystem.consume.Fill
+import io.github.damian1000.tradingsystem.limits.LimitsView
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
@@ -28,6 +29,7 @@ class TradeCapture(
     private val store: PositionStore,
     private val risk: RiskGateway,
     private val broadcaster: Broadcaster,
+    private val limitsView: LimitsView,
 ) : FillHandler {
     @Volatile
     private var openPrice: BigDecimal? = null
@@ -44,6 +46,6 @@ class TradeCapture(
      */
     fun snapshot(): DashboardSnapshot {
         val positions = book.all()
-        return DashboardSnapshot(positions, openPrice, risk.report(positions.firstOrNull(), openPrice))
+        return DashboardSnapshot(positions, openPrice, risk.report(positions.firstOrNull(), openPrice), limitsView.report())
     }
 }

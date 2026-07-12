@@ -13,12 +13,14 @@ live positions/risk/PnL dashboard.
 VaR, and day PnL update here as the fill arrives.
 
 ```
-orderbook.fills (Kafka) ──► FillConsumer ──► TradeCapture ──► PositionBook ──► PositionStore (Oracle, Flyway)
-                                 │                                  │
-                                 ▼ on poison / exhausted retries    ▼ every fill
-                          orderbook.fills.DLT              RiskGateway (risk-engine)
-                                                                    │
-                                                     DashboardServer ──► SSE ──► browser
+orderbook.fills (Kafka) ──┬─► FillConsumer (trading-system.positions) ──► TradeCapture ──► PositionBook ──► PositionStore (Oracle, Flyway)
+                          │        │                                           │
+                          │        ▼ on poison / exhausted retries             ▼ every fill
+                          │  orderbook.fills.DLT                      RiskGateway (risk-engine)
+                          │                                                    │
+                          │                                     DashboardServer ──► SSE ──► browser
+                          │                                                    ▲
+                          └─► FillConsumer (trading-system.limits) ──► LimitsChecker
 ```
 
 Matching and pricing are versioned library dependencies, not code in this repo:
@@ -54,6 +56,22 @@ sold — into a net signed quantity per symbol. Every update is persisted throug
 same rows rather than duplicating them, and the book warms from the store at startup. Schema is
 managed by Flyway.
 
+## Limits
+
+A second `FillConsumer` runs in its own consumer group (`trading-system.limits`) over the same
+`orderbook.fills` topic, so each fill is delivered to both the positions pipeline and
+`LimitsChecker` independently. The checker derives its own net position per symbol from the
+stream — it never reads the position book — and checks two ceilings on every fill: absolute net
+position and notional (|net quantity| × last price). Crossing a ceiling in either direction
+records a breach or clear event, stamped with the fill's own timestamp; the dashboard shows
+current utilisation per symbol and the recent event history.
+
+Malformed records on this path are counted and skipped rather than dead-lettered — the positions
+consumer owns the DLT, and a second publisher would duplicate every poison record. Limits state
+is in-memory: the group reads from `earliest`, so a restart rebuilds the same exposures and
+events from the retained stream. Because both groups push a snapshot per fill, the dashboard's
+update counter ticks roughly twice per fill; every frame is a complete snapshot.
+
 ## Risk and PnL
 
 On every fill, `RiskGateway` rebuilds a risk-engine `Portfolio` from the net position, marks it at
@@ -75,7 +93,10 @@ orderbook and risk-engine live sites.
 | ------------------------------------ | -------------------------------- | ---------------------------------- |
 | `KAFKA_BOOTSTRAP_SERVERS`            | `127.0.0.1:9092`                 | Broker to consume from             |
 | `FILLS_TOPIC` / `FILLS_DLT_TOPIC`    | `orderbook.fills` / `…fills.DLT` | Source and dead-letter topics      |
-| `KAFKA_GROUP_ID`                     | `trading-system.positions`       | Consumer group                     |
+| `KAFKA_GROUP_ID`                     | `trading-system.positions`       | Positions consumer group           |
+| `LIMITS_GROUP_ID`                    | `trading-system.limits`          | Limits consumer group              |
+| `LIMIT_MAX_POSITION`                 | `50`                             | Absolute net position ceiling      |
+| `LIMIT_MAX_NOTIONAL`                 | `5000`                           | Notional exposure ceiling          |
 | `DB_URL` / `DB_USER` / `DB_PASSWORD` | required                         | Oracle connection (wallet TNS URL) |
 | `PORT`                               | `8082`                           | Dashboard HTTP port                |
 
@@ -85,7 +106,7 @@ orderbook and risk-engine live sites.
 ./gradlew clean check
 ```
 
-JDK 25 via Gradle toolchain. The suite includes a real-broker pipeline test (fills in, positions
-out, poison to the DLT) and a real-database store test (Oracle Free), both via Testcontainers —
-a local Docker daemon is required for the full `check`. Coverage is gated at 90% instruction with
-only the process entry point excluded.
+JDK 25 via Gradle toolchain. The suite includes real-broker tests (fills in, positions out,
+poison to the DLT; two consumer groups fanning out over one topic) and a real-database store
+test (Oracle Free), all via Testcontainers — a local Docker daemon is required for the full
+`check`. Coverage is gated at 90% instruction with only the process entry point excluded.

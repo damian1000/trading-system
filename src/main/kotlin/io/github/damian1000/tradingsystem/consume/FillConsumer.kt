@@ -19,8 +19,9 @@ class FillConsumer(
     private val topic: String,
     private val handler: RecordHandler,
     private val pollTimeout: Duration = Duration.ofMillis(500),
+    threadName: String = "fill-consumer",
 ) : AutoCloseable {
-    private val thread = Thread(::run, "fill-consumer").apply { isDaemon = true }
+    private val thread = Thread(::run, threadName).apply { isDaemon = true }
 
     @Volatile
     private var running = false
@@ -60,25 +61,30 @@ class FillConsumer(
     companion object {
         private val CLOSE_TIMEOUT = Duration.ofSeconds(10)
 
-        /** A consumer over a real [KafkaConsumer], reading the topic from its start on first attach. */
+        /**
+         * A consumer over a real [KafkaConsumer], reading the topic from its start on first
+         * attach. [clientId] must be unique per consumer in the process — it names the poll
+         * thread and the JMX metrics, and two consumers sharing one collide on registration.
+         */
         fun create(
             bootstrapServers: String,
             groupId: String,
             topic: String,
             handler: RecordHandler,
+            clientId: String = "trading-system-fills",
         ): FillConsumer {
             val props =
                 Properties().apply {
                     put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
                     put(ConsumerConfig.GROUP_ID_CONFIG, groupId)
-                    put(ConsumerConfig.CLIENT_ID_CONFIG, "trading-system-fills")
+                    put(ConsumerConfig.CLIENT_ID_CONFIG, clientId)
                     // Offsets commit only after the batch is processed and persisted (see class doc).
                     put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
                     // A brand-new group starts from the beginning: positions are built from the
                     // whole retained fill history, not just fills after first deploy.
                     put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
                 }
-            return FillConsumer(KafkaConsumer(props, StringDeserializer(), StringDeserializer()), topic, handler)
+            return FillConsumer(KafkaConsumer(props, StringDeserializer(), StringDeserializer()), topic, handler, threadName = clientId)
         }
     }
 }

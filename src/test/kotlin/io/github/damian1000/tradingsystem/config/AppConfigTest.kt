@@ -3,6 +3,7 @@ package io.github.damian1000.tradingsystem.config
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import java.math.BigDecimal
 
 class AppConfigTest {
     private val db = mapOf("DB_URL" to "jdbc:oracle:thin:@db", "DB_USER" to "app", "DB_PASSWORD" to "secret")
@@ -14,6 +15,9 @@ class AppConfigTest {
         assertEquals("orderbook.fills", config.fillsTopic)
         assertEquals("orderbook.fills.DLT", config.deadLetterTopic)
         assertEquals("trading-system.positions", config.groupId)
+        assertEquals("trading-system.limits", config.limitsGroupId)
+        assertEquals(50, config.limitMaxPosition)
+        assertEquals(BigDecimal("5000"), config.limitMaxNotional)
         assertEquals(8082, config.port)
     }
 
@@ -27,6 +31,9 @@ class AppConfigTest {
                         "FILLS_TOPIC" to "fills",
                         "FILLS_DLT_TOPIC" to "fills.dead",
                         "KAFKA_GROUP_ID" to "g1",
+                        "LIMITS_GROUP_ID" to "g2",
+                        "LIMIT_MAX_POSITION" to "100",
+                        "LIMIT_MAX_NOTIONAL" to "12500.50",
                         "PORT" to "9000",
                     ),
             )
@@ -34,8 +41,20 @@ class AppConfigTest {
         assertEquals("fills", config.fillsTopic)
         assertEquals("fills.dead", config.deadLetterTopic)
         assertEquals("g1", config.groupId)
+        assertEquals("g2", config.limitsGroupId)
+        assertEquals(100, config.limitMaxPosition)
+        assertEquals(BigDecimal("12500.50"), config.limitMaxNotional)
         assertEquals(9000, config.port)
         assertEquals("jdbc:oracle:thin:@db", config.dbUrl)
+    }
+
+    @Test
+    fun `limit ceilings must be positive numbers`() {
+        listOf("LIMIT_MAX_POSITION", "LIMIT_MAX_NOTIONAL").forEach { name ->
+            assertThrows(IllegalArgumentException::class.java) { AppConfig.fromEnv(db + (name to "many")) }
+            assertThrows(IllegalArgumentException::class.java) { AppConfig.fromEnv(db + (name to "0")) }
+            assertThrows(IllegalArgumentException::class.java) { AppConfig.fromEnv(db + (name to "-5")) }
+        }
     }
 
     @Test

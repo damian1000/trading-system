@@ -4,6 +4,8 @@ import com.sun.net.httpserver.HttpExchange
 import io.github.damian1000.orderbook.model.Side
 import io.github.damian1000.riskengine.report.RiskReportAssembler
 import io.github.damian1000.tradingsystem.consume.Fill
+import io.github.damian1000.tradingsystem.limits.LimitsReport
+import io.github.damian1000.tradingsystem.limits.RiskLimits
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
@@ -53,6 +55,7 @@ class TradeCaptureTest {
             store = store,
             risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
             broadcaster = broadcaster,
+            limitsView = { LimitsReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0) },
         )
 
     private fun fill(
@@ -70,6 +73,7 @@ class TradeCaptureTest {
         val frame = broadcaster.frames.single()
         assertTrue(frame.contains(""""quantity":5"""), frame)
         assertTrue(frame.contains(""""report":{"""), "the broadcast snapshot carries the repriced report")
+        assertTrue(frame.contains(""""limits":{"""), "the broadcast snapshot carries the limits view")
     }
 
     @Test

@@ -118,6 +118,53 @@ function renderReport(report) {
   $("report").innerHTML = html;
 }
 
+function renderLimits(limits) {
+  if (limits.symbols.length === 0) {
+    $("limits").innerHTML =
+      '<p class="empty">awaiting the first fill&hellip;</p>';
+    return;
+  }
+  const pct = (u) => `${Math.round(u * 100)}%`;
+  const rows = limits.symbols
+    .map(
+      (s) => `<tr>
+        <td>${s.symbol}</td>
+        <td>${qty.format(Math.abs(s.netQuantity))} / ${qty.format(limits.maxPosition)}</td>
+        <td>${money.format(s.notional)} / ${money.format(limits.maxNotional)}</td>
+        <td>${pct(Math.max(s.positionUtilisation, s.notionalUtilisation))}</td>
+        <td>${s.breached ? '<span class="neg">BREACH</span>' : '<span class="pos">OK</span>'}</td>
+      </tr>`,
+    )
+    .join("");
+  let html = `<div class="report-block"><table class="risk">
+      <thead><tr><th>Symbol</th><th>Net</th><th>Notional</th><th>Util</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  if (limits.events.length > 0) {
+    const events = limits.events
+      .map(
+        (e) => `<tr>
+          <td>${new Date(e.ts).toLocaleTimeString()}</td>
+          <td>${e.symbol}</td>
+          <td>${e.kind}</td>
+          <td>${e.breached ? '<span class="neg">breach</span>' : '<span class="pos">cleared</span>'}</td>
+          <td>${money.format(e.value)} / ${money.format(e.limit)}</td>
+        </tr>`,
+      )
+      .join("");
+    html += `<div class="report-block">
+      <h3>Breach events <span class="sub">newest first</span></h3>
+      <table class="risk">
+        <thead><tr><th>Time</th><th>Symbol</th><th>Limit</th><th>Event</th><th>Value</th></tr></thead>
+        <tbody>${events}</tbody>
+      </table></div>`;
+  }
+  if (limits.malformed > 0) {
+    html += `<p class="empty">malformed records skipped: ${qty.format(limits.malformed)}</p>`;
+  }
+  $("limits").innerHTML = html;
+}
+
 function renderSession(snapshot) {
   const open = snapshot.openPrice;
   const rows = [
@@ -138,6 +185,7 @@ function render(snapshot) {
   renderStats(snapshot);
   renderPositions(snapshot.positions);
   renderReport(snapshot.report);
+  renderLimits(snapshot.limits);
   renderSession(snapshot);
 }
 

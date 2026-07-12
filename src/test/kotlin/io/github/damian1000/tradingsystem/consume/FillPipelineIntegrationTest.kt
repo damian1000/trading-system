@@ -2,6 +2,10 @@ package io.github.damian1000.tradingsystem.consume
 
 import io.github.damian1000.riskengine.report.RiskReportAssembler
 import io.github.damian1000.tradingsystem.capture.TradeCapture
+import io.github.damian1000.tradingsystem.limits.LimitKind
+import io.github.damian1000.tradingsystem.limits.LimitsChecker
+import io.github.damian1000.tradingsystem.limits.LimitsReport
+import io.github.damian1000.tradingsystem.limits.RiskLimits
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
@@ -22,6 +26,7 @@ import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.utility.DockerImageName
+import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.Properties
@@ -30,7 +35,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
 /**
  * The whole consume pipeline against a real broker: fills produced onto the topic land as
  * positions, and a poison record lands on the DLT with its error headers while the stream keeps
- * moving. A stub cannot fail the way a broker fails (rebalancing, offsets, wakeup semantics), so
+ * moving; a second test proves fan-out — two consumer groups over one topic each receive every
+ * fill. A stub cannot fail the way a broker fails (rebalancing, offsets, wakeup semantics), so
  * this runs against the real thing; it skips only where Docker is absent and always runs in CI.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -70,6 +76,8 @@ class FillPipelineIntegrationTest {
         """{"v":1,"symbol":"SIM","price":"101.00000000","size":$size,""" +
             """"makerOrderId":1,"takerOrderId":2,"aggressor":"$aggressor","ts":$ts}"""
 
+    private fun emptyLimits() = LimitsReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0)
+
     @Test
     fun `fills off the topic become positions and a poison record is dead-lettered, not fatal`() {
         val topic = "orderbook.fills"
@@ -77,7 +85,12 @@ class FillPipelineIntegrationTest {
         val store = CollectingStore()
         val book = PositionBook()
         val capture =
-            TradeCapture(book, store, RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()), SilentBroadcaster())
+            TradeCapture(
+                book,
+                store,
+                RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
+                SilentBroadcaster(),
+            ) { emptyLimits() }
         val deadLetters = DeadLetterPublisher.create(kafka.bootstrapServers, dlt)
         val consumer =
             FillConsumer.create(
@@ -109,6 +122,75 @@ class FillPipelineIntegrationTest {
             assertEquals("missing field: v", dead.first)
         } finally {
             consumer.close()
+            deadLetters.close()
+        }
+    }
+
+    @Test
+    fun `two consumer groups over one topic each receive every fill`() {
+        val topic = "orderbook.fills.fanout"
+        val store = CollectingStore()
+        val book = PositionBook()
+        val limitsChecker = LimitsChecker(RiskLimits(maxAbsPosition = 3, maxNotional = BigDecimal("1000000")))
+        val capture =
+            TradeCapture(
+                book,
+                store,
+                RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
+                SilentBroadcaster(),
+                limitsChecker,
+            )
+        val deadLetters = DeadLetterPublisher.create(kafka.bootstrapServers, "$topic.DLT")
+        val positionsConsumer =
+            FillConsumer.create(
+                bootstrapServers = kafka.bootstrapServers,
+                groupId = "fanout-it.positions",
+                topic = topic,
+                handler = RetryingHandler(capture, deadLetters, backoff = Duration.ofMillis(10)),
+                clientId = "fanout-it-positions",
+            )
+        val limitsConsumer =
+            FillConsumer.create(
+                bootstrapServers = kafka.bootstrapServers,
+                groupId = "fanout-it.limits",
+                topic = topic,
+                handler = limitsChecker,
+                clientId = "fanout-it-limits",
+            )
+
+        val producerProps =
+            Properties().apply {
+                put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafka.bootstrapServers)
+            }
+        KafkaProducer(producerProps, StringSerializer(), StringSerializer()).use { producer ->
+            producer.send(ProducerRecord(topic, "SIM", fillJson(size = 2)))
+            producer.send(ProducerRecord(topic, "SIM", fillJson(size = 3, ts = 2000)))
+            producer.flush()
+        }
+
+        positionsConsumer.start()
+        limitsConsumer.start()
+        try {
+            awaitTrue("the positions group should book both fills") { book.positionOf("SIM")?.quantity == 5L }
+            awaitTrue("the limits group should see the same net position") {
+                limitsChecker
+                    .report()
+                    .symbols
+                    .singleOrNull()
+                    ?.netQuantity == 5L
+            }
+
+            // Same two fills, consumed independently by each group: the limits side crossed its
+            // own ceiling on the second fill.
+            val report = limitsChecker.report()
+            assertTrue(report.symbols.single().breached, "net 5 over a ceiling of 3")
+            val event = report.events.single()
+            assertEquals(LimitKind.POSITION, event.kind)
+            assertTrue(event.breached)
+            assertEquals(2000, event.timeMillis)
+        } finally {
+            positionsConsumer.close()
+            limitsConsumer.close()
             deadLetters.close()
         }
     }
