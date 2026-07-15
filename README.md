@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/damian1000/trading-system/actions/workflows/ci.yml/badge.svg)](https://github.com/damian1000/trading-system/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/damian1000/trading-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/damian1000/trading-system/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/damian1000/trading-system/graph/badge.svg)](https://codecov.io/gh/damian1000/trading-system)
 
 Post-trade integration over the [orderbook](https://github.com/damian1000/orderbook) fill stream:
 consumes fills off Kafka, maintains net positions in an Oracle Autonomous Database, reprices the
