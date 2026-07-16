@@ -299,3 +299,10 @@ table.risk thead th {
     display: none;
   }
 }
+
+/* Embedded as a trading-desk tab (?embed=1): the desk supplies the outer chrome, so hide this
+   app's own topbar and status bar. */
+.embedded .topbar,
+.embedded .statusbar {
+  display: none;
+}

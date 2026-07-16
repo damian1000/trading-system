@@ -1,6 +1,12 @@
 /* Thin renderer over the server's snapshot JSON: every number is computed server-side by
    risk-engine's calculators; this file only formats and signs what /api/stream pushes. */
 
+// Embedded as a trading-desk tab (?embed=1): the desk supplies the outer chrome, so hide this
+// app's own topbar/status bar (see app.css .embedded). Standalone, the class is never added.
+if (new URLSearchParams(location.search).has("embed")) {
+  document.body.classList.add("embedded");
+}
+
 const $ = (id) => document.getElementById(id);
 
 const money = new Intl.NumberFormat("en-US", {
@@ -190,7 +196,7 @@ function render(snapshot) {
 }
 
 function connect() {
-  const stream = new EventSource("/api/stream");
+  const stream = new EventSource("api/stream");
   stream.onopen = () => {
     $("stream").textContent = "live";
   };
