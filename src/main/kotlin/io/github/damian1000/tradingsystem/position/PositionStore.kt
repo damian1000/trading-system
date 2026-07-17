@@ -12,8 +12,8 @@ interface PositionStore {
 /**
  * Plain JDBC over the `positions` table (Flyway `V1`), one connection per operation — fills
  * arrive at the live site's human rate, not a hot path, and a connection that is opened, used
- * and closed cannot go stale between fills. Oracle `MERGE` makes the save an upsert, so
- * replaying a fill batch after a crash rewrites the same rows rather than duplicating them.
+ * and closed cannot go stale between fills. Oracle `MERGE` makes the save an upsert keyed by
+ * symbol — one row per symbol, updated in place with the latest aggregate.
  */
 class JdbcPositionStore(
     private val connect: () -> Connection,
