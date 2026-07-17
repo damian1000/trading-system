@@ -2,28 +2,12 @@
 // the Autonomous DB, reprices them through risk-engine, and serves a live dashboard. Matching
 // and pricing are library dependencies (JitPack tags), not code that lives here.
 plugins {
-    id 'org.jetbrains.kotlin.jvm' version '2.3.21' // pinned: CodeQL's Kotlin extractor caps at <2.3.30
+    id 'io.github.damian1000.kotlin-conventions' version '0.1.0'
     id 'application'
-    id 'jacoco'
-    id 'com.diffplug.spotless' version '8.8.0'
-    id 'org.owasp.dependencycheck' version '12.2.2'
 }
 
 group = 'io.github.damian1000'
 version = '1.0.0'
-
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-}
-
-kotlin {
-    jvmToolchain(25)
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25)
-    }
-}
 
 application {
     applicationName = 'trading-system'
@@ -31,7 +15,6 @@ application {
 }
 
 repositories {
-    mavenCentral()
     maven { url = uri('https://jitpack.io') } // orderbook + risk-engine build from their git tags
 }
 
@@ -47,9 +30,6 @@ dependencies {
     // kafka-clients and Flyway log via slf4j; a binding routes warnings to stderr -> journalctl.
     runtimeOnly 'org.slf4j:slf4j-simple:2.0.18'
 
-    testImplementation platform('org.junit:junit-bom:6.1.1')
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.hamcrest:hamcrest:3.0'
     // Real-broker and real-database integration tests; run in CI, skipped where Docker is absent.
     testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
@@ -58,83 +38,33 @@ dependencies {
     testRuntimeOnly 'com.oracle.database.jdbc:ojdbc17:23.26.2.0.0'
 }
 
-test {
-    useJUnitPlatform()
-    finalizedBy jacocoTestReport
-}
-
 // Only the process entry point (MainKt — main() wires the real Kafka/DB/port and blocks) is
 // excluded. The rest — consumer loop, retry/DLT, positions, persistence, risk adapter, web —
 // is exercised by tests and counted.
 def coverageExclusions = ['**/tradingsystem/MainKt.class']
 
 jacocoTestReport {
-    dependsOn test
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect {
             fileTree(dir: it, excludes: coverageExclusions)
         }))
-    }
-    reports {
-        xml.required = true
-        html.required = true
     }
 }
 
 jacocoTestCoverageVerification {
-    dependsOn jacocoTestReport
     afterEvaluate {
         classDirectories.setFrom(files(classDirectories.files.collect {
             fileTree(dir: it, excludes: coverageExclusions)
         }))
     }
-    violationRules {
-        rule {
-            limit {
-                counter = 'INSTRUCTION'
-                value = 'COVEREDRATIO'
-                minimum = 0.90
-            }
-        }
-    }
 }
 
-check.dependsOn jacocoTestCoverageVerification
-
+// Front-end assets held to the same bar as the Kotlin: Prettier formats and CI fails on drift.
 spotless {
-    kotlin {
-        target 'src/**/*.kt'
-        ktlint('1.5.0')
-    }
-    kotlinGradle {
-        target '*.gradle.kts'
-        ktlint('1.5.0')
-    }
-    // Front-end assets held to the same bar as the Kotlin: Prettier formats and CI fails on drift.
     format 'web', {
         target 'src/main/resources/web/**/*.html', 'src/main/resources/web/**/*.css', 'src/main/resources/web/**/*.js'
         prettier('3.4.2')
         trimTrailingWhitespace()
         endWithNewline()
-    }
-    // Config/docs (YAML workflows, Markdown) held to the same bar as the Kotlin.
-    format 'config', {
-        target '.github/**/*.yml', '.github/**/*.yaml', '*.md'
-        prettier('3.4.2')
-        trimTrailingWhitespace()
-        endWithNewline()
-    }
-}
-
-// OWASP dependency vulnerability scanner. Run: ./gradlew dependencyCheckAnalyze
-// Fails the build on any dependency with CVSS >= 7.0.
-dependencyCheck {
-    failBuildOnCVSS = 7.0f
-    formats = ['HTML', 'JSON']
-    analyzers {
-        assemblyEnabled = false
-        nodeEnabled = false
-        nodeAuditEnabled = false
-        nuspecEnabled = false
     }
 }
