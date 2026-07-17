@@ -53,9 +53,9 @@ or a wrongly-typed field is poison, not a guess.
 
 `PositionBook` books the taker side of each fill — a BID aggressor bought, an OFFER aggressor
 sold — into a net signed quantity per symbol. Every update is persisted through
-`JdbcPositionStore` (plain JDBC, Oracle `MERGE`), so replaying a batch after a crash rewrites the
-same rows rather than duplicating them, and the book warms from the store at startup. Schema is
-managed by Flyway.
+`JdbcPositionStore` (plain JDBC, Oracle `MERGE`) as an upsert of the latest aggregate — one row
+per symbol, updated in place — and the book warms from the store at startup. Schema is managed
+by Flyway.
 
 ## Limits
 
@@ -69,9 +69,10 @@ current utilisation per symbol and the recent event history.
 
 Malformed records on this path are counted and skipped rather than dead-lettered — the positions
 consumer owns the DLT, and a second publisher would duplicate every poison record. Limits state
-is in-memory: the group reads from `earliest`, so a restart rebuilds the same exposures and
-events from the retained stream. Because both groups push a snapshot per fill, the dashboard's
-update counter ticks roughly twice per fill; every frame is a complete snapshot.
+is in-memory, derived from the fills the group has consumed: a brand-new consumer group reads
+from `earliest` and rebuilds from the retained history, while an existing group resumes from its
+committed offsets. Because both groups push a snapshot per fill, the dashboard's update counter
+ticks roughly twice per fill; every frame is a complete snapshot.
 
 ## Risk and PnL
 
