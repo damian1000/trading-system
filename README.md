@@ -81,6 +81,10 @@ bump-and-reprice Greeks, parametric and historical-simulation VaR/ES, and — on
 mark exists (the first fill seen) — the day's PnL attribution with its explicit residual. Every
 number comes from risk-engine's validated calculators; this repo adds no pricing maths.
 
+Slice 1 trades a single instrument, so `TradeCapture` reports risk for the first (only) position;
+`PositionBook` and `LimitsChecker` already track state per symbol, and the risk report generalises
+to the full book in a later slice.
+
 ## Dashboard
 
 A dependency-free JDK `HttpServer`: `GET /api/state` returns the current snapshot as JSON, `GET
