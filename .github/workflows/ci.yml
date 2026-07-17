@@ -16,6 +16,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check for Claude attribution in history
+        run: |
+          if git log --all --format="%B" | grep -iE "^co-authored-by:[[:space:]]*claude|noreply@anthropic|generated (with|by)[[:space:]]*claude|🤖"; then
+            echo "::error::Claude attribution found in git history — see CLAUDE.md commit standards."
+            exit 1
+          fi
 
       - name: Set up JDK 25
         uses: actions/setup-java@v5
