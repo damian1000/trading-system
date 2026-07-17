@@ -15,26 +15,4 @@ permissions:
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "25"
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: java-kotlin
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Build (no tests)
-        run: ./gradlew --no-daemon --no-build-cache clean classes testClasses -x test
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v4
+    uses: damian1000/.github/.github/workflows/codeql.yml@main
