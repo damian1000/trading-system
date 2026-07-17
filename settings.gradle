@@ -1,5 +1,19 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.namespace == 'io.github.damian1000') {
+                useModule("com.github.damian1000:build-conventions:${requested.version}")
+            }
+        }
+    }
+}
+
 plugins {
-    // Provisions the JDK 25 toolchain on machines that lack it.
     id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
 }
 
