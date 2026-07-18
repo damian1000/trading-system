@@ -2,7 +2,7 @@
 // the Autonomous DB, reprices them through risk-engine, and serves a live dashboard. Matching
 // and pricing are library dependencies (JitPack tags), not code that lives here.
 plugins {
-    id 'io.github.damian1000.kotlin-conventions' version '0.1.0'
+    id 'io.github.damian1000.kotlin-conventions' version '0.3.0'
     id 'application'
 }
 
@@ -21,21 +21,21 @@ repositories {
 dependencies {
     implementation 'com.github.damian1000:orderbook:v1.0.0'
     implementation 'com.github.damian1000:risk-engine:v1.0.0'
-    implementation 'org.apache.kafka:kafka-clients:4.3.1'
-    implementation 'org.flywaydb:flyway-core:12.11.0'
-    runtimeOnly 'org.flywaydb:flyway-database-oracle:12.11.0'
-    runtimeOnly 'com.oracle.database.jdbc:ojdbc17:23.26.2.0.0'
+    implementation deps.kafka.clients
+    implementation deps.flyway.core
+    runtimeOnly deps.flyway.oracle
+    runtimeOnly deps.oracle.jdbc
     // Reads the Autonomous DB's auto-login wallet (cwallet.sso) for mutual TLS.
-    runtimeOnly 'com.oracle.database.security:oraclepki:23.26.2.0.0'
+    runtimeOnly deps.oracle.pki
     // kafka-clients and Flyway log via slf4j; a binding routes warnings to stderr -> journalctl.
-    runtimeOnly 'org.slf4j:slf4j-simple:2.0.18'
+    runtimeOnly deps.slf4j.simple
 
-    testImplementation 'org.hamcrest:hamcrest:3.0'
+    testImplementation deps.hamcrest
     // Real-broker and real-database integration tests; run in CI, skipped where Docker is absent.
-    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
-    testImplementation 'org.testcontainers:kafka:1.21.4'
-    testImplementation 'org.testcontainers:oracle-free:1.21.4'
-    testRuntimeOnly 'com.oracle.database.jdbc:ojdbc17:23.26.2.0.0'
+    testImplementation deps.testcontainers.junit.jupiter
+    testImplementation deps.testcontainers.kafka
+    testImplementation deps.testcontainers.oracle.free
+    testRuntimeOnly deps.oracle.jdbc
 }
 
 // Only the process entry point (MainKt — main() wires the real Kafka/DB/port and blocks) is
@@ -56,15 +56,5 @@ jacocoTestCoverageVerification {
         classDirectories.setFrom(files(classDirectories.files.collect {
             fileTree(dir: it, excludes: coverageExclusions)
         }))
-    }
-}
-
-// Front-end assets held to the same bar as the Kotlin: Prettier formats and CI fails on drift.
-spotless {
-    format 'web', {
-        target 'src/main/resources/web/**/*.html', 'src/main/resources/web/**/*.css', 'src/main/resources/web/**/*.js'
-        prettier('3.4.2')
-        trimTrailingWhitespace()
-        endWithNewline()
     }
 }
