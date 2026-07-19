@@ -66,6 +66,12 @@ class JdbcPositionStore(
     ): RecordOutcome =
         connect().use { connection ->
             connection.autoCommit = false
+            // ADB warehouse services (high/medium) run DML in parallel by default, and a
+            // parallel MERGE poisons its transaction for reads — the committed-row SELECT
+            // below dies with ORA-12838. This transaction is OLTP-shaped, one ledger row and
+            // one position row, so parallel DML has nothing to offer it; state that instead
+            // of depending on the connection service's defaults. Must run before any DML.
+            connection.createStatement().use { it.execute("ALTER SESSION DISABLE PARALLEL DML") }
             try {
                 try {
                     connection.prepareStatement(INSERT_FILL).use { statement ->
