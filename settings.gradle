@@ -7,7 +7,7 @@ pluginManagement {
     resolutionStrategy {
         eachPlugin {
             if (requested.id.namespace == 'io.github.damian1000') {
-                useModule("com.github.damian1000:build-conventions:${requested.version}")
+                useModule("com.github.damian1000.build-conventions:plugins:${requested.version}")
             }
         }
     }
@@ -25,7 +25,7 @@ dependencyResolutionManagement {
     }
     versionCatalogs {
         create('deps') {
-            from 'com.github.damian1000:version-catalog:0.1.0'
+            from 'com.github.damian1000.build-conventions:catalog:0.4.1'
         }
     }
 }
