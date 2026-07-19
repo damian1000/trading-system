@@ -15,7 +15,7 @@ positions/risk/PnL dashboard.
 VaR, and day PnL update here as the fill arrives.
 
 ```
-orderbook.fills (Kafka) ──┬─► FillConsumer (trading-system.positions) ──► TradeCapture ──► fill ledger + positions (Oracle, one txn)
+orderbook.fills (Kafka) ──┬─► FillConsumer (seek from ledger) ──► TradeCapture ──► fill ledger + positions (Oracle, one txn)
                           │        │                                           │
                           │        ▼ on poison (parse failure) only            ▼ every applied fill
                           │  orderbook.fills.DLT (confirmed)          RiskGateway (risk-engine)
@@ -52,19 +52,26 @@ merge rolls the whole transaction back, leaving the coordinates free for the ret
 
 ## Fill consumption and failure handling
 
-`FillConsumer` runs a plain `kafka-clients` poll loop on its own thread and commits offsets only
-after a batch is fully processed. Each record passes through `RetryingHandler`, which splits
-poison from transient — the two failures deserve opposite treatment:
+`FillConsumer` runs a plain `kafka-clients` poll loop on its own thread. There is no consumer
+group and no offset commit: the fill ledger is the only checkpoint. Each partition is assigned
+directly and starts just past the ledger's high-water mark — or from the beginning where nothing
+is recorded, so a fresh or rebuilt database re-derives its state from the retained stream. A
+group commit would only add a second, competing account of how far the book of record has read;
+the migration that introduced the ledger (`V3`) retired the group by emptying `positions` and
+letting the stream rebuild it through the ledger.
+
+Each record passes through `RetryingHandler`, which splits poison from transient — the two
+failures deserve opposite treatment:
 
 - A record that fails to **parse** goes straight to `orderbook.fills.DLT` — malformed input
   never heals, so retrying it only stalls the stream.
 - A valid record whose **handling** fails (the database blinked) is retried 3 times, 500 ms
   apart, and on exhaustion the process halts rather than skip it: a valid economic event must
   never be lost to a transient outage, so the consumer exits, systemd restarts it, and the
-  uncommitted offset replays the fill into an application the ledger keeps idempotent. A
-  database outage therefore shows as a restarting, not-ready service — never as a silently
-  incomplete book. The DLT is for records that can never apply, not records that could not
-  apply _yet_.
+  restart seeks past the ledger's high-water mark — straight back to the stuck fill, into an
+  application the ledger keeps idempotent. A database outage therefore shows as a restarting,
+  not-ready service — never as a silently incomplete book. The DLT is for records that can
+  never apply, not records that could not apply _yet_.
 - Dead-letter publication is **confirmed**: `publish` blocks until the broker acknowledges the
   send. An unacknowledged send throws instead of being counted and forgotten — the process exits
   rather than commit past a record that is in neither stream. A record is either applied, on the
@@ -103,12 +110,12 @@ position and notional (|net quantity| × last price). Crossing a ceiling in eith
 records a breach or clear event, stamped with the fill's own timestamp; the dashboard shows
 current utilisation per symbol and the recent event history.
 
-Limits state is restart-safe through the fill ledger, not Kafka group offsets: at startup the
-checker replays the persisted fills (rebuilding exposures **and** the breach history — events
-carry each fill's own time), and the consumer then attaches to the live stream by assigning
-partitions and seeking just past the ledger's high-water mark. Both views therefore resume from
-the same durable truth after a restart, and the dashboard's `sync` block says whether they have
-read to the same stream position since.
+Limits state is restart-safe through the fill ledger, exactly like the positions path: at
+startup the checker replays the persisted fills (rebuilding exposures **and** the breach
+history — events carry each fill's own time), and the consumer attaches to the live stream past
+the ledger's high-water mark. Both views resume from the same durable truth after a restart,
+the dashboard's `sync` block says whether they have read to the same stream position since, and
+`/readyz` refuses to call the service ready when they stay apart.
 
 Malformed records on this path are counted and skipped rather than dead-lettered — the positions
 consumer owns the DLT, and a second publisher would duplicate every poison record.
@@ -137,9 +144,12 @@ Two endpoints report health at different depths:
 
 - `/healthz` — liveness: the web process answers.
 - `/readyz` — readiness: every consumer thread alive, assigned, and recently polling; the
-  database answering; dead-letter publish/failure counters. Returns 503 with the failing
-  component named when the pipeline is broken, whatever the web process says. Deploys gate on
-  this, so a deploy whose consumers cannot attach fails instead of going green.
+  database answering; the positions and limits views at the same stream offset (independent
+  consumers may sit apart mid-burst, so divergence gets a 30 s grace window — offsets still
+  apart after that mean a projection is stuck); dead-letter publish/failure counters. Returns
+  503 with the failing component named when the pipeline is broken or the projections disagree,
+  whatever the web process says. Deploys gate on this, so a deploy whose consumers cannot
+  attach — or whose views cannot converge — fails instead of going green.
 
 The snapshot itself carries a `sync` block — each consumer path's last stream offset and fill
 timestamp, whether the two views are coherent, how many replays the ledger dropped, and how many
@@ -155,13 +165,12 @@ fatal error, and the process exits so systemd restarts it into a safe replay.
 | ------------------------------------ | -------------------------------- | ---------------------------------- |
 | `KAFKA_BOOTSTRAP_SERVERS`            | `127.0.0.1:9092`                 | Broker to consume from             |
 | `FILLS_TOPIC` / `FILLS_DLT_TOPIC`    | `orderbook.fills` / `…fills.DLT` | Source and dead-letter topics      |
-| `KAFKA_GROUP_ID`                     | `trading-system.positions`       | Positions consumer group           |
 | `LIMIT_MAX_POSITION`                 | `50`                             | Absolute net position ceiling      |
 | `LIMIT_MAX_NOTIONAL`                 | `5000`                           | Notional exposure ceiling          |
 | `DB_URL` / `DB_USER` / `DB_PASSWORD` | required                         | Oracle connection (wallet TNS URL) |
 | `PORT`                               | `8082`                           | Dashboard HTTP port                |
 
-The limits consumer takes no group id — it derives its start position from the fill ledger.
+Neither consumer takes a group id — both derive their start position from the fill ledger.
 
 ## Build
 

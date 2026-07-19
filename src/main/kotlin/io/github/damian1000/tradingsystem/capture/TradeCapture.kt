@@ -44,8 +44,10 @@ class TradeCapture(
     @Volatile
     private var openPrice: BigDecimal? = null
 
+    /** Where this view sits on the stream — the readiness probe compares it with the limits view. */
     @Volatile
-    private var progress: ConsumerProgress? = initialProgress
+    var progress: ConsumerProgress? = initialProgress
+        private set
 
     private val duplicateCount = AtomicLong()
 

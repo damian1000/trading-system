@@ -38,9 +38,10 @@ import java.util.concurrent.ConcurrentLinkedQueue
 /**
  * The whole consume pipeline against a real broker: fills produced onto the topic land as
  * positions, and a poison record lands on the DLT with its error headers while the stream keeps
- * moving; a second test proves fan-out — two consumer groups over one topic each receive every
- * fill. A stub cannot fail the way a broker fails (rebalancing, offsets, wakeup semantics), so
- * this runs against the real thing; it skips only where Docker is absent and always runs in CI.
+ * moving; a second test proves fan-out — two independent consumers over one topic each receive
+ * every fill. A stub cannot fail the way a broker fails (metadata, partitioning, wakeup
+ * semantics), so this runs against the real thing; it skips only where Docker is absent and
+ * always runs in CI.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class FillPipelineIntegrationTest {
@@ -114,9 +115,10 @@ class FillPipelineIntegrationTest {
         val consumer =
             FillConsumer.create(
                 bootstrapServers = kafka.bootstrapServers,
-                groupId = "trading-system-it",
                 topic = topic,
                 handler = RetryingHandler(capture, deadLetters, backoff = Duration.ofMillis(10)),
+                startOffsets = emptyMap(),
+                clientId = "trading-system-it",
             )
 
         val producerProps =
@@ -150,7 +152,7 @@ class FillPipelineIntegrationTest {
     }
 
     @Test
-    fun `two consumer groups over one topic each receive every fill`() {
+    fun `two independent consumers over one topic each receive every fill`() {
         val topic = "orderbook.fills.fanout"
         val store = CollectingStore()
         val book = PositionBook()
@@ -164,18 +166,18 @@ class FillPipelineIntegrationTest {
                 limitsChecker,
             )
         val deadLetters = DeadLetterPublisher.create(kafka.bootstrapServers, "$topic.DLT")
+        // Both paths attach the way production does: no group, seeking from the ledger's
+        // high-water mark — here empty, so the whole retained stream replays into each.
         val positionsConsumer =
             FillConsumer.create(
                 bootstrapServers = kafka.bootstrapServers,
-                groupId = "fanout-it.positions",
                 topic = topic,
                 handler = RetryingHandler(capture, deadLetters, backoff = Duration.ofMillis(10)),
+                startOffsets = emptyMap(),
                 clientId = "fanout-it-positions",
             )
-        // The limits path attaches the way production does: no group, seeking from the ledger's
-        // high-water mark — here empty, so the whole retained stream replays.
         val limitsConsumer =
-            FillConsumer.createSeeking(
+            FillConsumer.create(
                 bootstrapServers = kafka.bootstrapServers,
                 topic = topic,
                 handler = limitsChecker,
@@ -196,8 +198,8 @@ class FillPipelineIntegrationTest {
         positionsConsumer.start()
         limitsConsumer.start()
         try {
-            awaitTrue("the positions group should book both fills") { book.positionOf("SIM")?.quantity == 5L }
-            awaitTrue("the limits group should see the same net position") {
+            awaitTrue("the positions consumer should book both fills") { book.positionOf("SIM")?.quantity == 5L }
+            awaitTrue("the limits consumer should see the same net position") {
                 limitsChecker
                     .report()
                     .symbols
@@ -205,7 +207,7 @@ class FillPipelineIntegrationTest {
                     ?.netQuantity == 5L
             }
 
-            // Same two fills, consumed independently by each group: the limits side crossed its
+            // Same two fills, consumed independently by each path: the limits side crossed its
             // own ceiling on the second fill.
             val report = limitsChecker.report()
             assertTrue(report.symbols.single().breached, "net 5 over a ceiling of 3")

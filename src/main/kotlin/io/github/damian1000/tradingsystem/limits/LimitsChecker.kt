@@ -42,8 +42,10 @@ class LimitsChecker(
     private val events = ArrayDeque<BreachEvent>()
     private var malformed = 0L
 
+    /** Where this view sits on the stream — the readiness probe compares it with the positions view. */
     @Volatile
-    private var progress: ConsumerProgress? = null
+    var progress: ConsumerProgress? = null
+        private set
 
     @Volatile
     private var listener: () -> Unit = {}

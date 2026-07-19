@@ -75,13 +75,14 @@ fun main(args: Array<String>) {
     val consumer =
         FillConsumer.create(
             bootstrapServers = config.kafkaBootstrapServers,
-            groupId = config.groupId,
             topic = config.fillsTopic,
             handler = RetryingHandler(capture, deadLetters),
+            startOffsets = ledger.highWaterOffsets,
+            clientId = "trading-system-fills",
             onFatal = fatal,
         )
     val limitsConsumer =
-        FillConsumer.createSeeking(
+        FillConsumer.create(
             bootstrapServers = config.kafkaBootstrapServers,
             topic = config.fillsTopic,
             handler = limits,
@@ -96,6 +97,8 @@ fun main(args: Array<String>) {
             databaseOk = store::ping,
             deadLettersPublished = deadLetters::published,
             deadLettersFailed = deadLetters::failed,
+            positionsView = capture::progress,
+            limitsView = limits::progress,
         )
     val server = DashboardServer(capture, broadcaster, WebAssets.load(), config.port, readiness)
 
