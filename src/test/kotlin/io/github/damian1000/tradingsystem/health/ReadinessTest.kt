@@ -1,6 +1,7 @@
 package io.github.damian1000.tradingsystem.health
 
 import io.github.damian1000.tradingsystem.consume.ConsumerHealth
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -27,6 +28,8 @@ class ReadinessTest {
 
     private val clock = SteppingClock()
     private val consumer = ConsumerHealth("fills", clock)
+    private var positionsOffset: Long? = 9L
+    private var limitsOffset: Long? = 9L
 
     private fun readiness(databaseOk: Boolean = true) =
         Readiness(
@@ -34,6 +37,9 @@ class ReadinessTest {
             databaseOk = { databaseOk },
             deadLettersPublished = { 3 },
             deadLettersFailed = { 1 },
+            positionsView = { positionsOffset?.let { ConsumerProgress(it, 1000) } },
+            limitsView = { limitsOffset?.let { ConsumerProgress(it, 1000) } },
+            clock = clock,
         )
 
     private fun healthyConsumer() {
@@ -95,5 +101,68 @@ class ReadinessTest {
         healthyConsumer()
         consumer.stopped()
         assertFalse(readiness().probe().ready)
+    }
+
+    @Test
+    fun `matching views are coherent and two empty views count as matching`() {
+        healthyConsumer()
+        assertTrue(readiness().probe().json.contains(""""coherent":true"""))
+
+        positionsOffset = null
+        limitsOffset = null
+        val probe = readiness().probe()
+        assertTrue(probe.ready, "a fresh install has consumed nothing on either path")
+        assertTrue(probe.json.contains(""""positionsOffset":null,"limitsOffset":null,"coherent":true"""), probe.json)
+    }
+
+    @Test
+    fun `diverged views stay ready within the grace window and fail it once stuck`() {
+        healthyConsumer()
+        positionsOffset = 7
+        val probes = readiness()
+
+        val within = probes.probe()
+        assertTrue(within.ready, "independent consumers legitimately sit apart mid-burst")
+        assertTrue(within.json.contains(""""coherent":false"""), within.json)
+        assertTrue(within.json.contains(""""incoherentForMillis":0"""), within.json)
+
+        clock.advance(Duration.ofSeconds(31))
+        consumer.polled()
+        val stuck = probes.probe()
+        assertFalse(stuck.ready, "views apart past the grace window mean a projection is stuck")
+        assertTrue(stuck.json.contains(""""positionsOffset":7,"limitsOffset":9"""), stuck.json)
+        assertTrue(stuck.json.contains(""""incoherentForMillis":31000"""), stuck.json)
+    }
+
+    @Test
+    fun `views that converge again reset the incoherence clock`() {
+        healthyConsumer()
+        positionsOffset = 7
+        val probes = readiness()
+        probes.probe()
+        clock.advance(Duration.ofSeconds(31))
+        consumer.polled()
+        assertFalse(probes.probe().ready)
+
+        positionsOffset = 9
+        assertTrue(probes.probe().ready, "caught-up views are coherent again")
+
+        positionsOffset = 8
+        clock.advance(Duration.ofSeconds(29))
+        consumer.polled()
+        assertTrue(probes.probe().ready, "a fresh divergence starts a fresh grace window")
+    }
+
+    @Test
+    fun `one empty view beside one consumed view is incoherent`() {
+        healthyConsumer()
+        positionsOffset = null
+        val probes = readiness()
+        probes.probe()
+        clock.advance(Duration.ofSeconds(31))
+        consumer.polled()
+        val probe = probes.probe()
+        assertFalse(probe.ready, "one view at the ledger and one at nothing cannot both be right")
+        assertTrue(probe.json.contains(""""positionsOffset":null,"limitsOffset":9,"coherent":false"""), probe.json)
     }
 }

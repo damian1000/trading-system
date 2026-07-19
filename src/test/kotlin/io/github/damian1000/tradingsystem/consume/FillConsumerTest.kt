@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * The poll loop's own semantics over a [MockConsumer]: health reporting, the fatal path, and
- * seek-mode attachment. The real-broker behaviour (rebalances, commits, wakeup) is covered by
+ * ledger-seek attachment. The real-broker behaviour (metadata, wakeup, fan-out) is covered by
  * [FillPipelineIntegrationTest].
  */
 class FillConsumerTest {
@@ -30,6 +30,8 @@ class FillConsumerTest {
     @Test
     fun `an unexpected poll failure marks health fatal and calls onFatal — never a silent death`() {
         val consumer = mockConsumer()
+        consumer.updatePartitions(topic, listOf(PartitionInfo(topic, 0, null, null, null)))
+        consumer.updateBeginningOffsets(mapOf(partition to 0L))
         val fatal = CountDownLatch(1)
         var seen: Exception? = null
         val fillConsumer =
@@ -38,6 +40,7 @@ class FillConsumerTest {
                 topic = topic,
                 handler = RecordHandler {},
                 health = ConsumerHealth("fills"),
+                startOffsets = emptyMap(),
                 pollTimeout = Duration.ofMillis(10),
                 onFatal = { error ->
                     seen = error
@@ -75,9 +78,8 @@ class FillConsumerTest {
                         if (record.offset() == 43L) caughtUp.countDown()
                     },
                 health = ConsumerHealth("limits"),
-                pollTimeout = Duration.ofMillis(10),
-                commitOffsets = false,
                 startOffsets = mapOf(0 to 41L),
+                pollTimeout = Duration.ofMillis(10),
             )
         consumer.schedulePollTask {
             consumer.addRecord(record(42))
@@ -111,9 +113,8 @@ class FillConsumerTest {
                         first.countDown()
                     },
                 health = ConsumerHealth("limits"),
-                pollTimeout = Duration.ofMillis(10),
-                commitOffsets = false,
                 startOffsets = emptyMap(),
+                pollTimeout = Duration.ofMillis(10),
             )
         consumer.schedulePollTask { consumer.addRecord(record(0)) }
 
@@ -137,9 +138,8 @@ class FillConsumerTest {
                 topic = topic,
                 handler = RecordHandler {},
                 health = ConsumerHealth("fills"),
-                pollTimeout = Duration.ofMillis(10),
-                commitOffsets = false,
                 startOffsets = emptyMap(),
+                pollTimeout = Duration.ofMillis(10),
             )
 
         fillConsumer.start()

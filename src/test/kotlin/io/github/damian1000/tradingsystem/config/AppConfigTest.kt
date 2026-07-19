@@ -14,7 +14,6 @@ class AppConfigTest {
         assertEquals("127.0.0.1:9092", config.kafkaBootstrapServers)
         assertEquals("orderbook.fills", config.fillsTopic)
         assertEquals("orderbook.fills.DLT", config.deadLetterTopic)
-        assertEquals("trading-system.positions", config.groupId)
         assertEquals(50, config.limitMaxPosition)
         assertEquals(BigDecimal("5000"), config.limitMaxNotional)
         assertEquals(8082, config.port)
@@ -29,7 +28,6 @@ class AppConfigTest {
                         "KAFKA_BOOTSTRAP_SERVERS" to "10.0.0.91:9094",
                         "FILLS_TOPIC" to "fills",
                         "FILLS_DLT_TOPIC" to "fills.dead",
-                        "KAFKA_GROUP_ID" to "g1",
                         "LIMIT_MAX_POSITION" to "100",
                         "LIMIT_MAX_NOTIONAL" to "12500.50",
                         "PORT" to "9000",
@@ -38,7 +36,6 @@ class AppConfigTest {
         assertEquals("10.0.0.91:9094", config.kafkaBootstrapServers)
         assertEquals("fills", config.fillsTopic)
         assertEquals("fills.dead", config.deadLetterTopic)
-        assertEquals("g1", config.groupId)
         assertEquals(100, config.limitMaxPosition)
         assertEquals(BigDecimal("12500.50"), config.limitMaxNotional)
         assertEquals(9000, config.port)

@@ -70,6 +70,8 @@ class DashboardServerTest {
             databaseOk = { true },
             deadLettersPublished = { 0 },
             deadLettersFailed = { 0 },
+            positionsView = { capture.progress },
+            limitsView = { null },
         )
     private val server = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0, readiness = readiness)
     private val client = HttpClient.newHttpClient()
