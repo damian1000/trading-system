@@ -17,7 +17,7 @@ VaR, and day PnL update here as the fill arrives.
 ```
 orderbook.fills (Kafka) ──┬─► FillConsumer (trading-system.positions) ──► TradeCapture ──► fill ledger + positions (Oracle, one txn)
                           │        │                                           │
-                          │        ▼ on poison / exhausted retries             ▼ every applied fill
+                          │        ▼ on poison (parse failure) only            ▼ every applied fill
                           │  orderbook.fills.DLT (confirmed)          RiskGateway (risk-engine)
                           │                                                    │
                           │                                     DashboardServer ──► SSE ──► browser
@@ -53,21 +53,35 @@ merge rolls the whole transaction back, leaving the coordinates free for the ret
 ## Fill consumption and failure handling
 
 `FillConsumer` runs a plain `kafka-clients` poll loop on its own thread and commits offsets only
-after a batch is fully processed. Each record passes through `RetryingHandler`, the retry→DLT
-mechanism written out rather than annotation-driven:
+after a batch is fully processed. Each record passes through `RetryingHandler`, which splits
+poison from transient — the two failures deserve opposite treatment:
 
-- A record that fails to parse goes straight to `orderbook.fills.DLT` — malformed input never
-  heals, so retrying it only stalls the stream.
-- A record whose handling fails (the database blinked) is retried 3 times, 500 ms apart, then
-  dead-lettered on exhaustion. Retrying the whole handler is safe because application is
-  idempotent.
+- A record that fails to **parse** goes straight to `orderbook.fills.DLT` — malformed input
+  never heals, so retrying it only stalls the stream.
+- A valid record whose **handling** fails (the database blinked) is retried 3 times, 500 ms
+  apart, and on exhaustion the process halts rather than skip it: a valid economic event must
+  never be lost to a transient outage, so the consumer exits, systemd restarts it, and the
+  uncommitted offset replays the fill into an application the ledger keeps idempotent. A
+  database outage therefore shows as a restarting, not-ready service — never as a silently
+  incomplete book. The DLT is for records that can never apply, not records that could not
+  apply _yet_.
 - Dead-letter publication is **confirmed**: `publish` blocks until the broker acknowledges the
   send. An unacknowledged send throws instead of being counted and forgotten — the process exits
-  rather than commit past a record that is in neither stream, and systemd restarts it into a
-  replay the ledger makes safe. A record is either applied, on the DLT, or ahead of the
-  committed offset; never in none of those places.
+  rather than commit past a record that is in neither stream. A record is either applied, on the
+  DLT, or ahead of the committed offset; never in none of those places.
 - Dead-lettered records carry the untouched original payload plus `dlt.error.*` and
   `dlt.source.*` headers (exception, source topic/partition/offset) for inspection and replay.
+  The dashboard's status bar flags a non-zero dead-letter count.
+
+### Dead-letter replay
+
+`trading-system replay-dlt` (the same binary, run with the service's environment) replays
+dead-lettered records back onto the fills topic: records whose payload now parses — a fill
+dead-lettered by a since-fixed defect — are republished with their key, payload, and provenance
+headers untouched, while still-malformed records stay on the DLT. Every send is confirmed and
+logged with its DLT coordinates. A replayed copy lands at new stream coordinates, which the
+ledger cannot recognise as a duplicate, so replay is a deliberate once-per-incident operation —
+run it once, then verify the dashboard's position and dead-letter counts.
 
 The fill schema is orderbook's versioned egress JSON (`v`, `symbol`, `price`, `size`,
 `makerOrderId`, `takerOrderId`, `aggressor`, `ts`), parsed strictly — an unknown schema version
@@ -128,9 +142,9 @@ Two endpoints report health at different depths:
   this, so a deploy whose consumers cannot attach fails instead of going green.
 
 The snapshot itself carries a `sync` block — each consumer path's last stream offset and fill
-timestamp, whether the two views are coherent, and how many replays the ledger dropped. The
-status bar renders it, along with the age of the current mark, so a quiet stream shows as an
-ageing mark rather than passing for fresh.
+timestamp, whether the two views are coherent, how many replays the ledger dropped, and how many
+records were dead-lettered this session. The status bar renders it, along with the age of the
+current mark, so a quiet stream shows as an ageing mark rather than passing for fresh.
 
 A consumer that dies on an unexpected exception is never a silent zombie: readiness reports the
 fatal error, and the process exits so systemd restarts it into a safe replay.

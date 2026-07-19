@@ -39,6 +39,7 @@ class TradeCapture(
     private val broadcaster: Broadcaster,
     private val limitsView: LimitsView,
     initialProgress: ConsumerProgress? = null,
+    private val deadLetters: () -> Long = { 0 },
 ) : FillHandler {
     @Volatile
     private var openPrice: BigDecimal? = null
@@ -82,6 +83,7 @@ class TradeCapture(
             limits = limitsView.report(),
             positionsProgress = progress,
             duplicates = duplicates,
+            deadLetters = deadLetters(),
         )
     }
 }

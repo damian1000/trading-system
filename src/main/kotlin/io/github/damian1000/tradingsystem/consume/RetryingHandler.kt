@@ -9,17 +9,29 @@ fun interface RecordHandler {
     fun handle(record: ConsumerRecord<String, String>)
 }
 
+/** A valid fill still failing after the bounded retries; the process halts rather than skip it. */
+class FillRetriesExhaustedException(
+    source: FillSource,
+    attempts: Int,
+    cause: Exception,
+) : RuntimeException(
+        "fill handling still failing after $attempts attempts at " +
+            "${source.topic}-${source.partition}@${source.offset}",
+        cause,
+    )
+
 /**
- * The retry→DLT policy around fill processing, with the mechanism in the open. A record that
- * fails to parse goes straight to the dead-letter topic — malformed input never heals, so
- * retrying it only stalls the stream. A record whose *handling* fails (the database blinked, the
- * broker hiccuped) is retried up to [attempts] times, [backoff] apart, and dead-lettered on
- * exhaustion. Retrying the whole handler is safe because application is idempotent: the fill
- * ledger's unique key means an attempt that half-succeeded cannot apply again on the next try.
+ * The failure policy around fill processing, splitting poison from transient. A record that
+ * fails to *parse* goes to the dead-letter topic and the stream continues — malformed input
+ * never heals, so retrying it only stalls the stream. A record whose *handling* fails (the
+ * database blinked) is retried up to [attempts] times, [backoff] apart, and on exhaustion the
+ * process halts: a valid economic event must never be skippable by a transient outage, so
+ * [FillRetriesExhaustedException] propagates, the consumer treats it as fatal, and systemd
+ * restarts the process into a replay that idempotent application makes safe. The DLT is for
+ * records that can never apply, not for records that could not apply *yet*.
  *
- * A [DeadLetterPublishException] propagates: an unacknowledged dead-letter send means the record
- * is in neither stream, so the batch must not commit — the process fails fast and the committed
- * offset replays it, which idempotent application makes safe.
+ * A [DeadLetterPublishException] propagates the same way: an unacknowledged dead-letter send
+ * means the record is in neither stream, so the batch must not commit.
  *
  * [sleep] is injectable so tests drive the backoff without real waiting.
  */
@@ -51,10 +63,7 @@ class RetryingHandler(
             } catch (e: DeadLetterPublishException) {
                 throw e
             } catch (e: Exception) {
-                if (attempt == attempts) {
-                    deadLetters.publish(record, e)
-                    return
-                }
+                if (attempt == attempts) throw FillRetriesExhaustedException(source, attempts, e)
                 attempt++
                 sleep(backoff)
             }

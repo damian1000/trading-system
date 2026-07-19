@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.nio.charset.StandardCharsets
 import java.time.Duration
 
 class RetryingHandlerTest {
@@ -71,20 +70,22 @@ class RetryingHandlerTest {
     }
 
     @Test
-    fun `exhausted retries dead-letter the record with the final error`() {
+    fun `exhausted retries halt the stream — a valid fill is never dead-lettered and skipped`() {
         val producer = mockProducer()
         val handler = CountingHandler(failures = 99)
 
-        RetryingHandler(handler, publisher(producer), attempts = 3, sleep = {}).handle(record(goodJson))
+        val thrown =
+            assertThrows(FillRetriesExhaustedException::class.java) {
+                RetryingHandler(handler, publisher(producer), attempts = 3, sleep = {}).handle(record(goodJson))
+            }
 
         assertEquals(3, handler.calls, "no attempts beyond the configured bound")
-        val sent = producer.history().single()
-        assertEquals("orderbook.fills.DLT", sent.topic())
-        assertEquals(goodJson, sent.value())
-        assertEquals(
-            "transient failure 3",
-            String(sent.headers().lastHeader("dlt.error.message").value(), StandardCharsets.UTF_8),
+        assertTrue(
+            producer.history().isEmpty(),
+            "the fill must stay ahead of the committed offset for the restart replay, not move to the DLT",
         )
+        assertEquals("transient failure 3", thrown.cause?.message, "the final attempt's error is the cause")
+        assertTrue(thrown.message!!.contains("orderbook.fills-0@7"), "the halt names the stuck coordinates")
     }
 
     @Test
@@ -105,11 +106,12 @@ class RetryingHandlerTest {
         // Auto-complete off and a tiny confirm window: the send never acks, publish throws.
         val producer = MockProducer(false, null, StringSerializer(), StringSerializer())
         val stalled = DeadLetterPublisher(producer, "orderbook.fills.DLT", confirmTimeout = Duration.ofMillis(50))
-        val handler = CountingHandler(failures = 99)
+        val handler = CountingHandler(failures = 0)
 
         assertThrows(DeadLetterPublishException::class.java) {
-            RetryingHandler(handler, stalled, attempts = 1, sleep = {}).handle(record(goodJson))
+            RetryingHandler(handler, stalled, attempts = 1, sleep = {}).handle(record("not json"))
         }
+        assertEquals(0, handler.calls, "poison never reaches the handler")
         assertEquals(1, stalled.failed, "the failure is counted for the readiness probe")
     }
 
