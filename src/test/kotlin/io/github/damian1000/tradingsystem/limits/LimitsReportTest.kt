@@ -1,5 +1,6 @@
 package io.github.damian1000.tradingsystem.limits
 
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -11,7 +12,7 @@ class LimitsReportTest {
     @Test
     fun `an untouched checker serialises to an explicitly empty state`() {
         assertEquals(
-            """{"maxPosition":50,"maxNotional":5000,"symbols":[],"events":[],"malformed":0}""",
+            """{"maxPosition":50,"maxNotional":5000,"symbols":[],"events":[],"malformed":0,"progress":null}""",
             LimitsReport(limits, emptyList(), emptyList(), 0).toJson(),
         )
     }
@@ -35,8 +36,14 @@ class LimitsReportTest {
                 """{"symbol":"SIM","netQuantity":7,"lastPrice":101.00000000,"notional":707.00000000,""" +
                 """"positionUtilisation":0.1400,"notionalUtilisation":0.1414,"breached":false}],""" +
                 """"events":[{"symbol":"SIM","kind":"POSITION","breached":true,"value":55,"limit":50,"ts":1720620000000}],""" +
-                """"malformed":2}""",
-            LimitsReport(limits, listOf(symbol), listOf(event), 2).toJson(),
+                """"malformed":2,"progress":{"offset":41,"fillTs":1720620000000}}""",
+            LimitsReport(
+                limits,
+                listOf(symbol),
+                listOf(event),
+                2,
+                ConsumerProgress(41, 1720620000000),
+            ).toJson(),
         )
     }
 

@@ -1,5 +1,6 @@
 package io.github.damian1000.tradingsystem.limits
 
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import java.math.BigDecimal
 
 /** Which ceiling a breach event refers to. */
@@ -32,19 +33,25 @@ data class SymbolLimits(
 
 /**
  * The limits consumer's whole view at one moment: per-symbol exposures, the bounded breach/clear
- * history (newest first), and how many malformed records were skipped. [toJson] follows the
- * dashboard's wire convention — one line, exact decimals as plain JSON numbers.
+ * history (newest first), how many malformed records were skipped, and how far along the stream
+ * this view has read ([progress], null before the first fill). [toJson] follows the dashboard's
+ * wire convention — one line, exact decimals as plain JSON numbers.
  */
 data class LimitsReport(
     val limits: RiskLimits,
     val symbols: List<SymbolLimits>,
     val events: List<BreachEvent>,
     val malformed: Long,
+    val progress: ConsumerProgress? = null,
 ) {
     fun toJson(): String =
         """{"maxPosition":${limits.maxAbsPosition},"maxNotional":${limits.maxNotional.toPlainString()},""" +
             """"symbols":[${symbols.joinToString(",", transform = ::symbolJson)}],""" +
-            """"events":[${events.joinToString(",", transform = ::eventJson)}],"malformed":$malformed}"""
+            """"events":[${events.joinToString(",", transform = ::eventJson)}],"malformed":$malformed,""" +
+            """"progress":${progressJson(progress)}}"""
+
+    private fun progressJson(p: ConsumerProgress?): String =
+        if (p == null) "null" else """{"offset":${p.offset},"fillTs":${p.fillTimeMillis}}"""
 
     private fun symbolJson(s: SymbolLimits): String =
         """{"symbol":${quote(s.symbol)},"netQuantity":${s.netQuantity},"lastPrice":${s.lastPrice.toPlainString()},""" +

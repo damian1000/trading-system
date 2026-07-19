@@ -3,6 +3,7 @@ package io.github.damian1000.tradingsystem.web
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import io.github.damian1000.tradingsystem.capture.TradeCapture
+import io.github.damian1000.tradingsystem.health.Readiness
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ExecutorService
@@ -20,6 +21,7 @@ class DashboardServer(
     private val broadcaster: Broadcaster,
     private val assets: WebAssets,
     private val port: Int,
+    private val readiness: Readiness? = null,
 ) {
     private lateinit var server: HttpServer
     private lateinit var executor: ExecutorService
@@ -46,12 +48,23 @@ class DashboardServer(
     private fun route(exchange: HttpExchange) {
         when (exchange.requestURI.path) {
             "/healthz" -> get(exchange) { respond(exchange, 200, "text/plain", "ok") }
+            "/readyz" -> get(exchange) { ready(exchange) }
             "/" -> get(exchange) { respond(exchange, 200, "text/html; charset=utf-8", assets.indexHtml) }
             "/app.css" -> get(exchange) { respond(exchange, 200, "text/css; charset=utf-8", assets.appCss) }
             "/app.js" -> get(exchange) { respond(exchange, 200, "text/javascript; charset=utf-8", assets.appJs) }
             "/api/state" -> get(exchange) { respond(exchange, 200, "application/json", capture.snapshot().toJson()) }
             "/api/stream" -> get(exchange) { broadcaster.stream(exchange, capture.snapshot().toJson()) }
             else -> respond(exchange, 404, "text/plain", "not found")
+        }
+    }
+
+    /** Liveness says the process answers; this says the pipeline works — 503 when it does not. */
+    private fun ready(exchange: HttpExchange) {
+        val probe = readiness?.probe()
+        if (probe == null) {
+            respond(exchange, 200, "application/json", """{"ready":true}""")
+        } else {
+            respond(exchange, if (probe.ready) 200 else 503, "application/json", probe.json)
         }
     }
 

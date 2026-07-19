@@ -1,5 +1,6 @@
 package io.github.damian1000.tradingsystem.limits
 
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import io.github.damian1000.tradingsystem.consume.Fill
 import io.github.damian1000.tradingsystem.consume.RecordHandler
 import org.apache.kafka.clients.consumer.ConsumerRecord
@@ -18,9 +19,12 @@ fun interface LimitsView {
  * [BreachEvent] whenever exposure crosses a [RiskLimits] ceiling in either direction. Checking
  * is in-memory only, so there is no transient failure to retry; a malformed record is counted
  * and skipped, not dead-lettered — the positions consumer owns the DLT, and a second publisher
- * would duplicate every poison record. State rebuilds from the retained stream on restart (the
- * group reads from `earliest`), and events carry the fill's own timestamp, so the rebuilt
- * history is the same one. Thread-safe: the consumer thread writes, web threads read.
+ * would duplicate every poison record.
+ *
+ * Restart safety comes from the fill ledger, not Kafka group offsets: [warm] replays the
+ * persisted fills at startup (events carry each fill's own timestamp, so the rebuilt history is
+ * the same one), and the consumer then seeks the live stream from the ledger's high-water mark.
+ * Thread-safe: the consumer thread writes, web threads read.
  */
 class LimitsChecker(
     private val limits: RiskLimits,
@@ -39,11 +43,29 @@ class LimitsChecker(
     private var malformed = 0L
 
     @Volatile
+    private var progress: ConsumerProgress? = null
+
+    @Volatile
     private var listener: () -> Unit = {}
 
     /** Called after every handled record, applied or counted — set once at wiring time. */
     fun onChange(listener: () -> Unit) {
         this.listener = listener
+    }
+
+    /**
+     * Rebuilds exposure state from the persisted ledger before the live stream attaches —
+     * startup only, before the consumer thread exists. [ledgerProgress] is the ledger's
+     * high-water mark, so the report's stream position is truthful from the first render.
+     */
+    fun warm(
+        fills: List<Fill>,
+        ledgerProgress: ConsumerProgress?,
+    ) {
+        synchronized(lock) {
+            fills.forEach(::apply)
+            progress = ledgerProgress
+        }
     }
 
     override fun handle(record: ConsumerRecord<String, String>) {
@@ -55,7 +77,10 @@ class LimitsChecker(
                 listener()
                 return
             }
-        synchronized(lock) { apply(fill) }
+        synchronized(lock) {
+            apply(fill)
+            progress = ConsumerProgress(record.offset(), fill.timeMillis)
+        }
         listener()
     }
 
@@ -95,6 +120,7 @@ class LimitsChecker(
                 symbols = exposures.entries.sortedBy { it.key }.map { (symbol, exposure) -> symbolLimits(symbol, exposure) },
                 events = events.toList(),
                 malformed = malformed,
+                progress = progress,
             )
         }
 

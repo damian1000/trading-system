@@ -3,16 +3,21 @@ package io.github.damian1000.tradingsystem.capture
 import com.sun.net.httpserver.HttpExchange
 import io.github.damian1000.orderbook.model.Side
 import io.github.damian1000.riskengine.report.RiskReportAssembler
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import io.github.damian1000.tradingsystem.consume.Fill
+import io.github.damian1000.tradingsystem.consume.FillSource
 import io.github.damian1000.tradingsystem.limits.LimitsReport
 import io.github.damian1000.tradingsystem.limits.RiskLimits
+import io.github.damian1000.tradingsystem.position.Ledger
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
+import io.github.damian1000.tradingsystem.position.RecordOutcome
 import io.github.damian1000.tradingsystem.pricing.MarketAssumptions
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import io.github.damian1000.tradingsystem.web.Broadcaster
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,16 +25,38 @@ import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
 class TradeCaptureTest {
+    /** Ledger semantics in memory: unique source coordinates, delta-derived positions. */
     private class InMemoryStore : PositionStore {
-        val saved = mutableListOf<Position>()
+        val ledger = LinkedHashMap<FillSource, Fill>()
+        val positions = LinkedHashMap<String, Position>()
         var failNext = false
 
-        override fun save(position: Position) {
-            if (failNext) throw IllegalStateException("database blinked")
-            saved.add(position)
+        override fun record(
+            fill: Fill,
+            source: FillSource,
+        ): RecordOutcome {
+            if (failNext) {
+                failNext = false
+                throw IllegalStateException("database blinked")
+            }
+            if (source in ledger) return RecordOutcome.Duplicate
+            ledger[source] = fill
+            val updated =
+                Position(
+                    symbol = fill.symbol,
+                    quantity = (positions[fill.symbol]?.quantity ?: 0L) + fill.signedSize,
+                    lastPrice = fill.price,
+                    lastTimeMillis = fill.timeMillis,
+                )
+            positions[fill.symbol] = updated
+            return RecordOutcome.Applied(updated)
         }
 
-        override fun loadAll(): List<Position> = saved.toList()
+        override fun loadAll(): List<Position> = positions.values.sortedBy { it.symbol }
+
+        override fun loadLedger(topic: String): Ledger = Ledger(ledger.values.toList(), emptyMap())
+
+        override fun ping(): Boolean = true
     }
 
     private class RecordingBroadcaster : Broadcaster {
@@ -49,9 +76,10 @@ class TradeCaptureTest {
 
     private val store = InMemoryStore()
     private val broadcaster = RecordingBroadcaster()
+    private val book = PositionBook()
     private val capture =
         TradeCapture(
-            book = PositionBook(),
+            book = book,
             store = store,
             risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
             broadcaster = broadcaster,
@@ -65,11 +93,14 @@ class TradeCaptureTest {
         ts: Long = 1000,
     ) = Fill("SIM", BigDecimal(price), size, 1, 2, side, ts)
 
-    @Test
-    fun `a fill is booked, persisted, and broadcast as a fresh snapshot`() {
-        capture.onFill(fill())
+    private fun source(offset: Long = 7) = FillSource("orderbook.fills", 0, offset)
 
-        assertEquals(5, store.saved.single().quantity)
+    @Test
+    fun `a fill is recorded, mirrored into the book, and broadcast as a fresh snapshot`() {
+        capture.onFill(fill(), source())
+
+        assertEquals(5, store.positions["SIM"]?.quantity)
+        assertEquals(5, book.positionOf("SIM")?.quantity)
         val frame = broadcaster.frames.single()
         assertTrue(frame.contains(""""quantity":5"""), frame)
         assertTrue(frame.contains(""""report":{"""), "the broadcast snapshot carries the repriced report")
@@ -77,9 +108,33 @@ class TradeCaptureTest {
     }
 
     @Test
-    fun `the first fill marks the session open and later fills measure PnL from it`() {
-        capture.onFill(fill(price = "100.00"))
-        capture.onFill(fill(price = "103.00", ts = 2000))
+    fun `a retried fill cannot move the position twice`() {
+        store.failNext = true
+        assertThrows(IllegalStateException::class.java) { capture.onFill(fill(), source()) }
+        assertNull(book.positionOf("SIM"), "a failed transaction must leave memory untouched")
+        assertTrue(broadcaster.frames.isEmpty(), "a fill that didn't persist must not be announced")
+
+        // The consumer's retry replays the same record; one application is the invariant.
+        capture.onFill(fill(), source())
+        assertEquals(5, book.positionOf("SIM")?.quantity)
+        assertEquals(5, store.positions["SIM"]?.quantity)
+    }
+
+    @Test
+    fun `a redelivered fill is dropped by the ledger, not applied again`() {
+        capture.onFill(fill(), source(offset = 7))
+        capture.onFill(fill(), source(offset = 7))
+
+        assertEquals(5, book.positionOf("SIM")?.quantity, "the duplicate must not double the position")
+        assertEquals(1, broadcaster.frames.size, "a dropped replay is not a state change to announce")
+        assertEquals(1, capture.duplicates)
+        assertTrue(capture.snapshot().toJson().contains(""""duplicatesDropped":1"""))
+    }
+
+    @Test
+    fun `the first applied fill marks the session open and later fills measure PnL from it`() {
+        capture.onFill(fill(price = "100.00"), source(offset = 1))
+        capture.onFill(fill(price = "103.00", ts = 2000), source(offset = 2))
 
         val snapshot = capture.snapshot()
         assertEquals(BigDecimal("100.00"), snapshot.openPrice, "the open is the first fill's price, not the latest")
@@ -97,9 +152,29 @@ class TradeCaptureTest {
     }
 
     @Test
-    fun `a store failure propagates to the caller and nothing is broadcast`() {
-        store.failNext = true
-        assertThrows(IllegalStateException::class.java) { capture.onFill(fill()) }
-        assertTrue(broadcaster.frames.isEmpty(), "a fill that didn't persist must not be announced")
+    fun `snapshot progress starts at the warmed ledger mark and follows applied fills`() {
+        val warmed =
+            TradeCapture(
+                book = book,
+                store = store,
+                risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
+                broadcaster = broadcaster,
+                limitsView = { LimitsReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0) },
+                initialProgress = ConsumerProgress(41, 900),
+            )
+        assertEquals(ConsumerProgress(41, 900), warmed.snapshot().positionsProgress)
+
+        warmed.onFill(fill(ts = 1500), source(offset = 42))
+        assertEquals(ConsumerProgress(42, 1500), warmed.snapshot().positionsProgress)
+    }
+
+    @Test
+    fun `a replayed record still advances the reported stream position`() {
+        capture.onFill(fill(), source(offset = 7))
+        capture.onFill(fill(ts = 2000), source(offset = 7))
+
+        val progress = capture.snapshot().positionsProgress
+        assertEquals(7, progress?.offset)
+        assertFalse(broadcaster.frames.size > 1)
     }
 }

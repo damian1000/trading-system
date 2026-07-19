@@ -4,6 +4,16 @@ import io.github.damian1000.orderbook.model.Side
 import java.math.BigDecimal
 
 /**
+ * Where a record sits on the stream. The triple is unique per delivered record, which makes it
+ * the natural idempotency key: applying the same coordinates twice is a replay, not a new fill.
+ */
+data class FillSource(
+    val topic: String,
+    val partition: Int,
+    val offset: Long,
+)
+
+/**
  * One execution off the `orderbook.fills` topic, as orderbook's `KafkaMarketEgress` emits it:
  * `{"v":1,"symbol":…,"price":…,"size":…,"makerOrderId":…,"takerOrderId":…,"aggressor":…,"ts":…}`.
  * The [aggressor] is the taker's side ([Side.BID] lifted the offer, [Side.OFFER] hit the bid);
