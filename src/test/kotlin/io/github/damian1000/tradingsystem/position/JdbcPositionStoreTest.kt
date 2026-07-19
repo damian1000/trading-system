@@ -27,9 +27,13 @@ import java.sql.SQLException
 @Testcontainers(disabledWithoutDocker = true)
 class JdbcPositionStoreTest {
     companion object {
+        // Three minutes, not the default: on a loaded workstation the database's cold start
+        // brushes the shorter window and fails the suite before a single test runs.
         @Container
         @JvmField
-        val oracle: OracleContainer = OracleContainer("gvenzl/oracle-free:23-slim-faststart")
+        val oracle: OracleContainer =
+            OracleContainer("gvenzl/oracle-free:23-slim-faststart")
+                .withStartupTimeout(java.time.Duration.ofMinutes(3))
     }
 
     private val store = JdbcPositionStore { DriverManager.getConnection(oracle.jdbcUrl, oracle.username, oracle.password) }
@@ -71,6 +75,33 @@ class JdbcPositionStoreTest {
         assertEquals(0, BigDecimal("102.00000000").compareTo(position.lastPrice))
         assertEquals(2000, position.lastTimeMillis)
         assertEquals(position.quantity, store.loadAll().single().quantity, "the returned row is the committed row")
+    }
+
+    @Test
+    fun `the same execution at new coordinates is a duplicate — republication cannot double-count`() {
+        store.record(fill(size = 5).copy(execId = "42-1"), source(1))
+        val copy = store.record(fill(size = 5).copy(execId = "42-1"), FillSource("orderbook.fills.replayed", 0, 0))
+
+        assertEquals(RecordOutcome.Duplicate, copy)
+        assertEquals(5, store.loadAll().single().quantity, "one execution, one application")
+        assertEquals(
+            "42-1",
+            store
+                .loadLedger("orderbook.fills")
+                .fills
+                .single()
+                .execId,
+            "identity survives the ledger round-trip",
+        )
+    }
+
+    @Test
+    fun `records without execution ids dedupe by coordinates alone — nulls never collide`() {
+        store.record(fill(size = 5), source(1))
+        val second = store.record(fill(size = 3, ts = 2000), source(2))
+
+        assertTrue(second is RecordOutcome.Applied, "two null exec_ids must not trip the unique index")
+        assertEquals(8, store.loadAll().single().quantity)
     }
 
     @Test

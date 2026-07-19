@@ -43,6 +43,10 @@ corrupt the positions, so application is idempotent at the database:
   signed size **in the same transaction**. A crash can never persist one without the other.
 - A replayed record hits the ledger's primary key (ORA-00001), is reported as a duplicate, and
   changes nothing. The dashboard counts these under "Replays dropped".
+- The producer's `execId` is stored under its own unique index: coordinates identify a
+  _record_, `execId` identifies the _execution_, so the same economic fill republished at new
+  coordinates — a dead-letter replay, a redelivery through another topic — is still a
+  duplicate. Records published before the id existed dedupe by coordinates alone.
 - In-memory state updates only from the committed row, after the transaction — a retried
   handler cannot move a position twice, because the second attempt is a duplicate by then.
 
@@ -86,13 +90,15 @@ failures deserve opposite treatment:
 dead-lettered records back onto the fills topic: records whose payload now parses — a fill
 dead-lettered by a since-fixed defect — are republished with their key, payload, and provenance
 headers untouched, while still-malformed records stay on the DLT. Every send is confirmed and
-logged with its DLT coordinates. A replayed copy lands at new stream coordinates, which the
-ledger cannot recognise as a duplicate, so replay is a deliberate once-per-incident operation —
-run it once, then verify the dashboard's position and dead-letter counts.
+logged with its DLT coordinates. A replayed copy lands at new stream coordinates, but its
+payload keeps its `execId`, so the ledger recognises a second replay of the same execution as a
+duplicate — replay is idempotent for any record carrying the id. Only pre-`execId` records need
+the older discipline: replay once, then verify the dashboard's position and dead-letter counts.
 
-The fill schema is orderbook's versioned egress JSON (`v`, `symbol`, `price`, `size`,
+The fill schema is orderbook's versioned egress JSON (`v`, `execId`, `symbol`, `price`, `size`,
 `makerOrderId`, `takerOrderId`, `aggressor`, `ts`), parsed strictly — an unknown schema version
-or a wrongly-typed field is poison, not a guess.
+or a wrongly-typed field is poison, not a guess. `execId` is optional: records published before
+the producer stamped it parse with a null identity.
 
 ## Positions
 
