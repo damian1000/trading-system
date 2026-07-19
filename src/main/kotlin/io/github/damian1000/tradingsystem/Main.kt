@@ -1,6 +1,7 @@
 package io.github.damian1000.tradingsystem
 
 import io.github.damian1000.riskengine.report.RiskReportAssembler
+import io.github.damian1000.tradingsystem.capture.SessionOpens
 import io.github.damian1000.tradingsystem.capture.TradeCapture
 import io.github.damian1000.tradingsystem.config.AppConfig
 import io.github.damian1000.tradingsystem.consume.ConsumerProgress
@@ -65,7 +66,8 @@ fun main(args: Array<String>) {
     val limits = LimitsChecker(RiskLimits(config.limitMaxPosition, config.limitMaxNotional))
     limits.warm(ledger.fills, ledgerProgress)
     val deadLetters = DeadLetterPublisher.create(config.kafkaBootstrapServers, config.deadLetterTopic)
-    val capture = TradeCapture(book, store, risk, broadcaster, limits, ledgerProgress, deadLetters::published)
+    val opens = SessionOpens().apply { ledger.fills.forEach(::observe) }
+    val capture = TradeCapture(book, store, risk, broadcaster, limits, opens, ledgerProgress, deadLetters::published)
     limits.onChange { broadcaster.broadcast(capture.snapshot().toJson()) }
 
     val fatal: (Exception) -> Unit = { error ->

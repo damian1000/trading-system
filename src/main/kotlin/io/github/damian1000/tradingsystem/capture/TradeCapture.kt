@@ -10,7 +10,6 @@ import io.github.damian1000.tradingsystem.position.RecordOutcome
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import io.github.damian1000.tradingsystem.view.DashboardSnapshot
 import io.github.damian1000.tradingsystem.web.Broadcaster
-import java.math.BigDecimal
 import java.util.concurrent.atomic.AtomicLong
 
 /** What consumes parsed fills; [TradeCapture] is the production pipeline. */
@@ -28,9 +27,8 @@ fun interface FillHandler {
  * ledger's unique key reports it as a duplicate and the book is left alone. Failures propagate
  * to the caller — the consumer's retry→DLT policy decides what happens next, not this class.
  *
- * The first fill this process applies marks the session open; day PnL measures from it. A
- * restart therefore restarts the PnL clock — positions survive (restored from the store), the
- * open mark does not.
+ * Day PnL measures from [SessionOpens] — per-symbol opens derived from fill event time, warmed
+ * from the ledger at startup — so positions *and* the PnL clock survive a restart together.
  */
 class TradeCapture(
     private val book: PositionBook,
@@ -38,12 +36,10 @@ class TradeCapture(
     private val risk: RiskGateway,
     private val broadcaster: Broadcaster,
     private val limitsView: LimitsView,
+    private val opens: SessionOpens = SessionOpens(),
     initialProgress: ConsumerProgress? = null,
     private val deadLetters: () -> Long = { 0 },
 ) : FillHandler {
-    @Volatile
-    private var openPrice: BigDecimal? = null
-
     /** Where this view sits on the stream — the readiness probe compares it with the limits view. */
     @Volatile
     var progress: ConsumerProgress? = initialProgress
@@ -60,7 +56,7 @@ class TradeCapture(
     ) {
         when (val outcome = store.record(fill, source)) {
             is RecordOutcome.Applied -> {
-                if (openPrice == null) openPrice = fill.price
+                opens.observe(fill)
                 book.put(outcome.position)
                 progress = ConsumerProgress(source.offset, fill.timeMillis)
                 broadcaster.broadcast(snapshot().toJson())
@@ -72,16 +68,12 @@ class TradeCapture(
         }
     }
 
-    /**
-     * The current state, repriced on request. Slice 1 trades a single instrument, so the report
-     * covers the first (only) position; the multi-symbol book generalises in a later slice.
-     */
+    /** The current state, repriced on request — every position, each in its own market. */
     fun snapshot(): DashboardSnapshot {
         val positions = book.all()
         return DashboardSnapshot(
             positions = positions,
-            openPrice = openPrice,
-            report = risk.report(positions.firstOrNull(), openPrice),
+            book = risk.bookReport(positions, opens::openFor),
             limits = limitsView.report(),
             positionsProgress = progress,
             duplicates = duplicates,

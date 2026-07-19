@@ -31,17 +31,13 @@ function arrow(el, value, text) {
 }
 
 function renderStats(snapshot) {
-  const position = snapshot.positions[0];
-  const report = snapshot.report;
-  if (position) {
-    arrow($("st-position"), position.quantity, qty.format(position.quantity));
-    $("st-last").textContent = money.format(position.lastPrice);
-  }
-  if (report) {
-    $("st-valuation").textContent = money.format(report.valuation);
-    const pnl = report.pnl ? report.pnl.actual : null;
-    if (pnl != null) arrow($("st-pnl"), pnl, money.format(pnl));
-  }
+  const book = snapshot.book;
+  if (!book) return;
+  $("st-instruments").textContent = String(book.symbols.length);
+  $("st-gross").textContent = money.format(book.grossNotional);
+  arrow($("st-valuation"), book.valuation, money.format(book.valuation));
+  if (book.dayPnl != null)
+    arrow($("st-pnl"), book.dayPnl, money.format(book.dayPnl));
 }
 
 function renderPositions(positions) {
@@ -66,12 +62,19 @@ function renderPositions(positions) {
     </table></div>`;
 }
 
-function renderReport(report) {
-  if (!report) {
+/* One block per symbol: each report is priced in that symbol's own market, so the sums the
+   book strip shows are the only cross-symbol numbers — VaR and Greeks stay per symbol. */
+function renderReport(book) {
+  if (!book) {
     $("report").innerHTML =
       '<p class="empty">no marks yet &mdash; the report prices off the first fill</p>';
     return;
   }
+  $("report").innerHTML = book.symbols.map(symbolReport).join("");
+}
+
+function symbolReport(s) {
+  const report = s.report;
   const g = report.greeks;
   const pct = Math.round(report.confidence * 100);
   const varBlock = (label, m) => `<tr>
@@ -79,12 +82,14 @@ function renderReport(report) {
       <td>${money.format(m.valueAtRisk)}</td>
       <td>${money.format(m.expectedShortfall)}</td>
     </tr>`;
+  const open =
+    s.openPrice == null ? "no fill today" : `open ${money.format(s.openPrice)}`;
   let html = `<div class="report-block">
-      <h3>Valuation <span class="sub">mark-to-market</span></h3>
+      <h3>${s.symbol} <span class="sub">mark-to-market &middot; ${open}</span></h3>
       <div class="valuation">${money.format(report.valuation)}</div>
     </div>
     <div class="report-block">
-      <h3>Greeks <span class="sub">bump-and-reprice</span></h3>
+      <h3>Greeks <span class="sub">${s.symbol} &middot; bump-and-reprice</span></h3>
       <table class="risk"><tbody>
         <tr><td>Delta</td><td>${signed(g.delta, fmt(g.delta, 2))}</td></tr>
         <tr><td>Gamma</td><td>${fmt(g.gamma)}</td></tr>
@@ -94,7 +99,7 @@ function renderReport(report) {
       </tbody></table>
     </div>
     <div class="report-block">
-      <h3>VaR / Expected Shortfall <span class="sub">${pct}% &middot; 1-day</span></h3>
+      <h3>VaR / Expected Shortfall <span class="sub">${s.symbol} &middot; ${pct}% &middot; 1-day</span></h3>
       <table class="risk">
         <thead><tr><th>Method</th><th>VaR</th><th>ES</th></tr></thead>
         <tbody>
@@ -108,7 +113,7 @@ function renderReport(report) {
     const row = (label, v) =>
       `<tr><td>${label}</td><td>${signed(v, money.format(v))}</td></tr>`;
     html += `<div class="report-block">
-      <h3>Day PnL <span class="sub">attribution vs session open</span></h3>
+      <h3>Day PnL <span class="sub">${s.symbol} &middot; attribution vs session open</span></h3>
       <table class="risk"><tbody>
         ${row("Actual", p.actual)}
         ${row("Delta", p.delta)}
@@ -121,7 +126,7 @@ function renderReport(report) {
       </tbody></table>
     </div>`;
   }
-  $("report").innerHTML = html;
+  return html;
 }
 
 function renderLimits(limits) {
@@ -172,11 +177,9 @@ function renderLimits(limits) {
 }
 
 function renderSession(snapshot) {
-  const open = snapshot.openPrice;
   const sync = snapshot.sync;
   const offset = (p) => (p == null ? "—" : `@${p.offset}`);
   const rows = [
-    ["Session open", open == null ? "—" : money.format(open)],
     ["Instruments", String(snapshot.positions.length)],
     ["Positions view", offset(sync.positions)],
     ["Limits view", offset(sync.limits)],
@@ -239,7 +242,7 @@ function render(snapshot) {
   $("updates").textContent = String(updates);
   renderStats(snapshot);
   renderPositions(snapshot.positions);
-  renderReport(snapshot.report);
+  renderReport(snapshot.book);
   renderLimits(snapshot.limits);
   renderSession(snapshot);
   renderSync(snapshot.sync);

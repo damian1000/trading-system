@@ -122,16 +122,21 @@ consumer owns the DLT, and a second publisher would duplicate every poison recor
 
 ## Risk and PnL
 
-On every applied fill, `RiskGateway` rebuilds a risk-engine `Portfolio` from the net position,
-marks it at the last traded price, and asks `RiskReportAssembler` for the report: mark-to-market
-valuation, bump-and-reprice Greeks, parametric and historical-simulation VaR/ES, and — once a
-session-open mark exists (the first fill applied by this process) — the day's PnL attribution
-with its explicit residual. Every number comes from risk-engine's validated calculators; this
-repo adds no pricing maths.
+On every applied fill, `RiskGateway` prices **every position**, each in its own market: a
+risk-engine `Portfolio` per symbol, marked at that symbol's last traded price, through
+`RiskReportAssembler` — mark-to-market valuation, bump-and-reprice Greeks, parametric and
+historical-simulation VaR/ES, and the day's PnL attribution with its explicit residual. Every
+number comes from risk-engine's validated calculators; this repo adds no pricing maths.
 
-Slice 1 trades a single instrument, so `TradeCapture` reports risk for the first (only) position;
-`PositionBook` and `LimitsChecker` already track state per symbol, and the risk report generalises
-to the full book in a later slice.
+The book strip sums only what is honest to sum across single-underlier reports: valuation,
+gross notional, and day PnL are currency amounts and add; Greeks and VaR stay per symbol,
+because summing share-count deltas across underliers, or taking a quantile across
+independently-scenarioed symbols, would label numbers the market model does not price.
+
+Day PnL measures from `SessionOpens`: each symbol's open is the price of its first fill on its
+latest trading day (UTC, by the fill's own timestamp), derived purely from the ledger fills that
+built the book — so a restart warms the same opens back and the PnL clock survives the process.
+A symbol with no fill on its latest day carries no PnL claim rather than a zero.
 
 ## Dashboard and operational truth
 

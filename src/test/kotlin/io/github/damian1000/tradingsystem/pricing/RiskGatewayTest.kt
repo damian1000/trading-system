@@ -77,6 +77,43 @@ class RiskGatewayTest {
     }
 
     @Test
+    fun `the book report values every position in its own market and sums only currency amounts`() {
+        val positions =
+            listOf(
+                Position("AAPL", 10, BigDecimal("300.00"), 1000),
+                Position("SIM", -40, BigDecimal("25.00"), 1000),
+                Position("SPCX", 0, BigDecimal("130.00"), 1000),
+            )
+        val opens = mapOf("AAPL" to BigDecimal("290.00"))
+
+        val book = gateway.bookReport(positions) { opens[it] }!!
+
+        assertEquals(listOf("AAPL", "SIM", "SPCX"), book.symbols.map { it.symbol }, "every position is valued")
+        // 10×300 − 40×25 + 0: each symbol at its own mark.
+        assertThat(book.valuation.toDouble(), closeTo(2000.0, 1e-6))
+        assertThat("gross adds absolute exposures", book.grossNotional.toDouble(), closeTo(4000.0, 1e-6))
+        // Only AAPL traded today (has an open): book day PnL is its 10 shares up 10.00.
+        assertThat(book.dayPnl!!.toDouble(), closeTo(100.0, 1e-2))
+        assertNull(
+            book.symbols
+                .single { it.symbol == "SIM" }
+                .report.pnl,
+            "no open, no day PnL claim",
+        )
+    }
+
+    @Test
+    fun `an empty book reports null — nothing to mark against`() {
+        assertNull(gateway.bookReport(emptyList()) { null })
+    }
+
+    @Test
+    fun `a book with no opens carries no day PnL instead of a zero claim`() {
+        val book = gateway.bookReport(listOf(position(100, "50.00"))) { null }!!
+        assertNull(book.dayPnl)
+    }
+
+    @Test
     fun `the default assumptions are reproducible across instances`() {
         assertEquals(MarketAssumptions.default().scenarioReturns, MarketAssumptions.default().scenarioReturns)
         assertEquals(250, MarketAssumptions.default().scenarioReturns.size)
