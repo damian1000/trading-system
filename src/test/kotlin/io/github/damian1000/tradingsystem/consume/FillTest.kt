@@ -30,6 +30,13 @@ class FillTest {
     }
 
     @Test
+    fun `carries the execution id when present and null when absent`() {
+        val stamped = egressJson.replace(""""v":1,""", """"v":1,"execId":"1720620000000-7",""")
+        assertEquals("1720620000000-7", Fill.parse(stamped).execId)
+        assertEquals(null, Fill.parse(egressJson).execId, "pre-execId records still parse")
+    }
+
+    @Test
     fun `a BID aggressor bought, an OFFER aggressor sold`() {
         assertEquals(5L, Fill.parse(egressJson).signedSize)
         assertEquals(-5L, Fill.parse(egressJson.replace("BID", "OFFER")).signedSize)

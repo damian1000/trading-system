@@ -22,6 +22,9 @@ internal class FlatJson private constructor(
         return value.text
     }
 
+    /** The field as a JSON string, or null when absent — for additive optional fields. */
+    fun stringOrNull(name: String): String? = if (name in fields) string(name) else null
+
     fun long(name: String): Long {
         val value = field(name)
         require(!value.isString) { "$name must be a JSON number, got a string" }

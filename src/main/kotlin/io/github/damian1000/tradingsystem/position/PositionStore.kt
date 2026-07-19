@@ -84,9 +84,12 @@ class JdbcPositionStore(
                         statement.setLong(7, fill.makerOrderId)
                         statement.setLong(8, fill.takerOrderId)
                         statement.setLong(9, fill.timeMillis)
+                        statement.setString(10, fill.execId)
                         statement.executeUpdate()
                     }
                 } catch (_: SQLIntegrityConstraintViolationException) {
+                    // Either uniqueness boundary: the coordinate primary key (same record again)
+                    // or the exec_id index (same execution at new coordinates) — a replay either way.
                     connection.rollback()
                     return RecordOutcome.Duplicate
                 }
@@ -148,6 +151,7 @@ class JdbcPositionStore(
                                 takerOrderId = rows.getLong("taker_order_id"),
                                 aggressor = if (signed < 0) Side.OFFER else Side.BID,
                                 timeMillis = rows.getLong("time_millis"),
+                                execId = rows.getString("exec_id"),
                             ),
                         )
                         highWater[rows.getInt("source_partition")] = rows.getLong("source_offset")
@@ -179,7 +183,7 @@ class JdbcPositionStore(
     companion object {
         private const val INSERT_FILL =
             "INSERT INTO fills (source_topic, source_partition, source_offset, symbol, price, signed_size, " +
-                "maker_order_id, taker_order_id, time_millis) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "maker_order_id, taker_order_id, time_millis, exec_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         private const val MERGE_POSITION =
             "MERGE INTO positions p USING (SELECT ? AS symbol FROM dual) src ON (p.symbol = src.symbol) " +
                 "WHEN MATCHED THEN UPDATE SET quantity = p.quantity + ?, last_price = ?, last_time_millis = ? " +
@@ -192,6 +196,6 @@ class JdbcPositionStore(
         private const val PING = "SELECT 1 FROM dual"
         private const val SELECT_LEDGER =
             "SELECT source_partition, source_offset, symbol, price, signed_size, maker_order_id, taker_order_id, " +
-                "time_millis FROM fills WHERE source_topic = ? ORDER BY source_partition, source_offset"
+                "time_millis, exec_id FROM fills WHERE source_topic = ? ORDER BY source_partition, source_offset"
     }
 }

@@ -15,9 +15,12 @@ data class FillSource(
 
 /**
  * One execution off the `orderbook.fills` topic, as orderbook's `KafkaMarketEgress` emits it:
- * `{"v":1,"symbol":…,"price":…,"size":…,"makerOrderId":…,"takerOrderId":…,"aggressor":…,"ts":…}`.
+ * `{"v":1,"execId":…,"symbol":…,"price":…,"size":…,"makerOrderId":…,"takerOrderId":…,"aggressor":…,"ts":…}`.
  * The [aggressor] is the taker's side ([Side.BID] lifted the offer, [Side.OFFER] hit the bid);
  * [price] arrives as a JSON string because the producer keeps it exact rather than a float.
+ * [execId] is the producer's stable execution identity — carried in the payload so a copy of the
+ * record at new stream coordinates is still the same execution; null on records published
+ * before the id existed.
  */
 data class Fill(
     val symbol: String,
@@ -27,6 +30,7 @@ data class Fill(
     val takerOrderId: Long,
     val aggressor: Side,
     val timeMillis: Long,
+    val execId: String? = null,
 ) {
     init {
         require(price.signum() > 0) { "price must be positive, got $price" }
@@ -52,6 +56,7 @@ data class Fill(
                 takerOrderId = fields.long("takerOrderId"),
                 aggressor = side(fields.string("aggressor")),
                 timeMillis = fields.long("ts"),
+                execId = fields.stringOrNull("execId"),
             )
         }
 
