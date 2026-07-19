@@ -26,7 +26,7 @@ jobs:
           java-version: "25"
 
       - name: Set up Node # Prettier (web + config formatting) runs under Spotless
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
 
