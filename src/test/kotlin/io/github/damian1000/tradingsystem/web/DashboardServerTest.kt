@@ -132,7 +132,7 @@ class DashboardServerTest {
         val response = get("/api/state")
         assertEquals(200, response.statusCode())
         assertEquals("application/json", response.headers().firstValue("Content-Type").get())
-        assertTrue(response.body().startsWith("""{"v":1,"positions":["""), response.body())
+        assertTrue(response.body().startsWith("""{"v":2,"positions":["""), response.body())
         assertTrue(response.body().contains(""""limits":{"""), response.body())
         assertTrue(response.body().contains(""""sync":{"""), response.body())
     }

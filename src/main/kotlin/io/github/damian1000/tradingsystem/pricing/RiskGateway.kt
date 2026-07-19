@@ -46,7 +46,7 @@ data class MarketAssumptions(
 }
 
 /**
- * The bridge into risk-engine: builds a [Portfolio] from the net position, marks it at the last
+ * The bridge into risk-engine: builds a [Portfolio] per position, marks it at the symbol's last
  * traded price, and asks the library for the day's report — valuation, Greeks, VaR/ES both ways,
  * and (when a session-open mark exists) the day's PnL attribution. A direct library call, not
  * another Kafka hop; every number comes from risk-engine's validated calculators.
@@ -55,6 +55,22 @@ class RiskGateway(
     private val assembler: RiskReportAssembler,
     private val assumptions: MarketAssumptions,
 ) {
+    /**
+     * One report per position — the library's market model is single-underlier, so each symbol
+     * is priced in its own market and [BookRisk] carries only the sums that survive that model.
+     * Null before anything has traded (no mark to price against).
+     */
+    fun bookReport(
+        positions: List<Position>,
+        openFor: (String) -> BigDecimal?,
+    ): BookRisk? =
+        positions
+            .map { position ->
+                val open = openFor(position.symbol)
+                SymbolRisk(position.symbol, open, checkNotNull(report(position, open)))
+            }.takeIf { it.isNotEmpty() }
+            ?.let(::BookRisk)
+
     /**
      * The report over [position], or null before anything has traded (no mark to price against).
      * [openPrice] is the session-open mark; when present the report carries day PnL from it.

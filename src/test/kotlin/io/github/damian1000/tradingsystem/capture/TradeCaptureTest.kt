@@ -91,7 +91,8 @@ class TradeCaptureTest {
         size: Long = 5,
         price: String = "100.00",
         ts: Long = 1000,
-    ) = Fill("SIM", BigDecimal(price), size, 1, 2, side, ts)
+        symbol: String = "SIM",
+    ) = Fill(symbol, BigDecimal(price), size, 1, 2, side, ts)
 
     private fun source(offset: Long = 7) = FillSource("orderbook.fills", 0, offset)
 
@@ -147,22 +148,36 @@ class TradeCaptureTest {
     }
 
     @Test
-    fun `the first applied fill marks the session open and later fills measure PnL from it`() {
+    fun `day PnL measures from the day's first fill via the shared opens`() {
         capture.onFill(fill(price = "100.00"), source(offset = 1))
         capture.onFill(fill(price = "103.00", ts = 2000), source(offset = 2))
 
-        val snapshot = capture.snapshot()
-        assertEquals(BigDecimal("100.00"), snapshot.openPrice, "the open is the first fill's price, not the latest")
-        assertTrue(snapshot.toJson().contains(""""openPrice":100.00"""), snapshot.toJson())
-        assertTrue(snapshot.report!!.pnl != null, "with an open mark the report attributes day PnL")
+        val symbol =
+            capture
+                .snapshot()
+                .book!!
+                .symbols
+                .single()
+        assertEquals(BigDecimal("100.00"), symbol.openPrice, "the open is the day's first fill, not the latest")
+        assertTrue(symbol.report.pnl != null, "with an open mark the report attributes day PnL")
+    }
+
+    @Test
+    fun `every position is valued — the book covers all symbols, not the first`() {
+        capture.onFill(fill(price = "100.00"), source(offset = 1))
+        capture.onFill(fill(price = "300.00", symbol = "AAPL", ts = 2000), source(offset = 2))
+
+        val book = capture.snapshot().book!!
+        assertEquals(listOf("AAPL", "SIM"), book.symbols.map { it.symbol })
+        // 5 shares at each symbol's own mark: 5×300 + 5×100.
+        assertEquals(0, BigDecimal("2000").compareTo(book.valuation), book.valuation.toPlainString())
     }
 
     @Test
     fun `before any fill the snapshot is explicitly empty`() {
         val snapshot = capture.snapshot()
         assertTrue(snapshot.positions.isEmpty())
-        assertNull(snapshot.openPrice)
-        assertNull(snapshot.report)
+        assertNull(snapshot.book)
         assertTrue(broadcaster.frames.isEmpty(), "nothing to push until something trades")
     }
 
