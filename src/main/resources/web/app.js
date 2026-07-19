@@ -181,6 +181,7 @@ function renderSession(snapshot) {
     ["Positions view", offset(sync.positions)],
     ["Limits view", offset(sync.limits)],
     ["Replays dropped", qty.format(sync.duplicatesDropped)],
+    ["Dead letters", qty.format(sync.deadLetters)],
   ]
     .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)
     .join("");
@@ -199,6 +200,13 @@ function renderSync(sync) {
     el.textContent = "catching up";
     el.className = "neg";
   }
+}
+
+/* Dead letters are rare and demand an operator's eye, so the flag exists only when nonzero. */
+function renderDeadLetters(sync) {
+  const item = $("dlt-item");
+  item.hidden = !(sync.deadLetters > 0);
+  $("dlt").textContent = String(sync.deadLetters);
 }
 
 const MARK_STALE_MILLIS = 10 * 60 * 1000;
@@ -235,6 +243,7 @@ function render(snapshot) {
   renderLimits(snapshot.limits);
   renderSession(snapshot);
   renderSync(snapshot.sync);
+  renderDeadLetters(snapshot.sync);
   renderMarkAge();
 }
 

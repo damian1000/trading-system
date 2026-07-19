@@ -132,6 +132,21 @@ class TradeCaptureTest {
     }
 
     @Test
+    fun `the snapshot carries the dead-letter count for the dashboard's operator flag`() {
+        val withDeadLetters =
+            TradeCapture(
+                book = book,
+                store = store,
+                risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
+                broadcaster = broadcaster,
+                limitsView = { LimitsReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0) },
+                deadLetters = { 3 },
+            )
+
+        assertTrue(withDeadLetters.snapshot().toJson().contains(""""deadLetters":3"""))
+    }
+
+    @Test
     fun `the first applied fill marks the session open and later fills measure PnL from it`() {
         capture.onFill(fill(price = "100.00"), source(offset = 1))
         capture.onFill(fill(price = "103.00", ts = 2000), source(offset = 2))

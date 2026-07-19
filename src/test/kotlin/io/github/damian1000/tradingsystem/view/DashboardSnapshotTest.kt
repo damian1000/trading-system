@@ -21,7 +21,7 @@ class DashboardSnapshotTest {
         assertEquals(
             """{"v":1,"positions":[],"openPrice":null,"report":null,""" +
                 """"limits":{"maxPosition":50,"maxNotional":5000,"symbols":[],"events":[],"malformed":0,"progress":null},""" +
-                """"sync":{"positions":null,"limits":null,"coherent":true,"duplicatesDropped":0}}""",
+                """"sync":{"positions":null,"limits":null,"coherent":true,"duplicatesDropped":0,"deadLetters":0}}""",
             DashboardSnapshot(emptyList(), null, null, emptyLimits).toJson(),
         )
     }
@@ -50,12 +50,13 @@ class DashboardSnapshotTest {
     @Test
     fun `matching stream positions are coherent, diverged ones are flagged`() {
         val limitsAt = emptyLimits.copy(progress = ConsumerProgress(7, 1000))
-        val together = DashboardSnapshot(emptyList(), null, null, limitsAt, ConsumerProgress(7, 1000), duplicates = 2)
+        val together =
+            DashboardSnapshot(emptyList(), null, null, limitsAt, ConsumerProgress(7, 1000), duplicates = 2, deadLetters = 1)
         assertTrue(together.coherent)
         assertTrue(
             together.toJson().contains(
                 """"sync":{"positions":{"offset":7,"fillTs":1000},"limits":{"offset":7,"fillTs":1000},""" +
-                    """"coherent":true,"duplicatesDropped":2}""",
+                    """"coherent":true,"duplicatesDropped":2,"deadLetters":1}""",
             ),
             together.toJson(),
         )

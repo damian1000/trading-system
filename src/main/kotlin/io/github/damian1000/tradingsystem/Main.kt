@@ -5,6 +5,7 @@ import io.github.damian1000.tradingsystem.capture.TradeCapture
 import io.github.damian1000.tradingsystem.config.AppConfig
 import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import io.github.damian1000.tradingsystem.consume.DeadLetterPublisher
+import io.github.damian1000.tradingsystem.consume.DltReplay
 import io.github.damian1000.tradingsystem.consume.FillConsumer
 import io.github.damian1000.tradingsystem.consume.RetryingHandler
 import io.github.damian1000.tradingsystem.health.Readiness
@@ -29,9 +30,21 @@ import kotlin.system.exitProcess
  * A consumer that dies on an unexpected exception exits the process: continuing would mean
  * committing past records that are in neither the ledger nor the DLT, and systemd's
  * `Restart=on-failure` brings the process back into a replay the ledger makes idempotent.
+ *
+ * `replay-dlt` runs [DltReplay] instead of the service — the operator entry point for feeding
+ * recoverable dead letters back through the pipeline (runbook: workspace-config doc 15).
  */
-fun main() {
+fun main(args: Array<String>) {
     val config = AppConfig.fromEnv(System.getenv())
+
+    if (args.firstOrNull() == "replay-dlt") {
+        val summary = DltReplay.create(config).use { it.run() }
+        println(
+            "replayed ${summary.replayed} record(s) to ${config.fillsTopic}; " +
+                "${summary.stillMalformed} still-malformed record(s) left on ${config.deadLetterTopic}",
+        )
+        return
+    }
 
     Flyway
         .configure()
@@ -51,14 +64,14 @@ fun main() {
     val risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default())
     val limits = LimitsChecker(RiskLimits(config.limitMaxPosition, config.limitMaxNotional))
     limits.warm(ledger.fills, ledgerProgress)
-    val capture = TradeCapture(book, store, risk, broadcaster, limits, ledgerProgress)
+    val deadLetters = DeadLetterPublisher.create(config.kafkaBootstrapServers, config.deadLetterTopic)
+    val capture = TradeCapture(book, store, risk, broadcaster, limits, ledgerProgress, deadLetters::published)
     limits.onChange { broadcaster.broadcast(capture.snapshot().toJson()) }
 
     val fatal: (Exception) -> Unit = { error ->
         System.err.println("fill consumer failed: $error")
         exitProcess(1)
     }
-    val deadLetters = DeadLetterPublisher.create(config.kafkaBootstrapServers, config.deadLetterTopic)
     val consumer =
         FillConsumer.create(
             bootstrapServers = config.kafkaBootstrapServers,

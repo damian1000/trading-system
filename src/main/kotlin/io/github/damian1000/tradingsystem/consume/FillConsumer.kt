@@ -14,10 +14,11 @@ import java.util.Properties
  * Offsets are committed after each fully processed batch, so delivery is at-least-once; the
  * store's fill ledger makes the replay a batch of duplicates rather than a double-count.
  *
- * An exception the [RecordHandler] lets through is fatal by design: it means a record could not
- * be applied *or* dead-lettered, so continuing would commit past a lost record. The loop marks
- * the health record failed and hands the error to [onFatal] — production exits the process and
- * systemd restarts it into a safe replay.
+ * An exception the [RecordHandler] lets through is fatal by design: a valid record exhausted
+ * its retries or a dead-letter send went unacknowledged — either way the record is in neither
+ * stream, so continuing would commit past it. The loop marks the health record failed and hands
+ * the error to [onFatal] — production exits the process and systemd restarts it into a safe
+ * replay.
  */
 class FillConsumer(
     private val consumer: Consumer<String, String>,
