@@ -79,12 +79,13 @@ class ReadinessTest {
     }
 
     @Test
-    fun `a dead consumer thread reports its fatal error`() {
+    fun `a dead consumer thread reports its fatal error with the whole cause chain`() {
         healthyConsumer()
-        consumer.failed(IllegalStateException("poll exploded"))
+        consumer.failed(IllegalStateException("retries exhausted", java.sql.SQLException("ORA-01653: unable to extend")))
         val probe = readiness().probe()
         assertFalse(probe.ready)
-        assertTrue(probe.json.contains("poll exploded"), probe.json)
+        assertTrue(probe.json.contains("retries exhausted"), probe.json)
+        assertTrue(probe.json.contains("ORA-01653"), "the wrapper without the root cause tells an operator nothing")
         assertTrue(probe.json.contains(""""threadAlive":false"""), probe.json)
     }
 

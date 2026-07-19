@@ -69,7 +69,8 @@ fun main(args: Array<String>) {
     limits.onChange { broadcaster.broadcast(capture.snapshot().toJson()) }
 
     val fatal: (Exception) -> Unit = { error ->
-        System.err.println("fill consumer failed: $error")
+        System.err.println("fill consumer failed:")
+        error.printStackTrace()
         exitProcess(1)
     }
     val consumer =
