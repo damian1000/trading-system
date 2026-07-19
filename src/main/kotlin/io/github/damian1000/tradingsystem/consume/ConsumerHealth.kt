@@ -44,7 +44,11 @@ class ConsumerHealth(
     }
 
     fun failed(error: Throwable) {
-        fatal = "${error.javaClass.name}: ${error.message}"
+        // The whole cause chain: "retries exhausted" without the ORA code underneath tells an
+        // operator nothing — the probe must name the root cause, not the wrapper.
+        fatal =
+            generateSequence(error) { it.cause }
+                .joinToString(" <- ") { "${it.javaClass.name}: ${it.message}" }
         threadAlive = false
     }
 
