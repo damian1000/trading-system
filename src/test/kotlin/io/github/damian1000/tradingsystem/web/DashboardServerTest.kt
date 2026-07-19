@@ -3,12 +3,17 @@ package io.github.damian1000.tradingsystem.web
 import io.github.damian1000.orderbook.model.Side
 import io.github.damian1000.riskengine.report.RiskReportAssembler
 import io.github.damian1000.tradingsystem.capture.TradeCapture
+import io.github.damian1000.tradingsystem.consume.ConsumerHealth
 import io.github.damian1000.tradingsystem.consume.Fill
+import io.github.damian1000.tradingsystem.consume.FillSource
+import io.github.damian1000.tradingsystem.health.Readiness
 import io.github.damian1000.tradingsystem.limits.LimitsReport
 import io.github.damian1000.tradingsystem.limits.RiskLimits
+import io.github.damian1000.tradingsystem.position.Ledger
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
+import io.github.damian1000.tradingsystem.position.RecordOutcome
 import io.github.damian1000.tradingsystem.pricing.MarketAssumptions
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import org.junit.jupiter.api.AfterAll
@@ -26,25 +31,47 @@ import java.net.http.HttpResponse
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** The server against real loopback HTTP: routing, content types, the state JSON, and the SSE push. */
+/** The server against real loopback HTTP: routing, content types, the state JSON, readiness, and the SSE push. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DashboardServerTest {
-    private class NoopStore : PositionStore {
-        override fun save(position: Position) {}
+    private class InMemoryStore : PositionStore {
+        private val positions = HashMap<String, Position>()
 
-        override fun loadAll(): List<Position> = emptyList()
+        override fun record(
+            fill: Fill,
+            source: FillSource,
+        ): RecordOutcome {
+            val updated =
+                Position(fill.symbol, (positions[fill.symbol]?.quantity ?: 0L) + fill.signedSize, fill.price, fill.timeMillis)
+            positions[fill.symbol] = updated
+            return RecordOutcome.Applied(updated)
+        }
+
+        override fun loadAll(): List<Position> = positions.values.sortedBy { it.symbol }
+
+        override fun loadLedger(topic: String): Ledger = Ledger(emptyList(), emptyMap())
+
+        override fun ping(): Boolean = true
     }
 
     private val broadcaster = SseBroadcaster()
     private val capture =
         TradeCapture(
             book = PositionBook(),
-            store = NoopStore(),
+            store = InMemoryStore(),
             risk = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
             broadcaster = broadcaster,
             limitsView = { LimitsReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0) },
         )
-    private val server = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0)
+    private val consumerHealth = ConsumerHealth("test-consumer").apply { started() }
+    private val readiness =
+        Readiness(
+            consumers = listOf(consumerHealth),
+            databaseOk = { true },
+            deadLettersPublished = { 0 },
+            deadLettersFailed = { 0 },
+        )
+    private val server = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0, readiness = readiness)
     private val client = HttpClient.newHttpClient()
 
     @BeforeAll
@@ -65,10 +92,26 @@ class DashboardServerTest {
         )
 
     @Test
-    fun `healthz answers ok for the deploy gate`() {
+    fun `healthz answers ok — the process is up`() {
         val response = get("/healthz")
         assertEquals(200, response.statusCode())
         assertEquals("ok", response.body())
+    }
+
+    @Test
+    fun `readyz answers 503 with the failing component named until the pipeline is healthy`() {
+        // The consumer thread exists but has not polled with an assignment yet.
+        val notReady = get("/readyz")
+        assertEquals(503, notReady.statusCode())
+        assertTrue(notReady.body().contains(""""ready":false"""), notReady.body())
+        assertTrue(notReady.body().contains(""""test-consumer":{"ok":false"""), notReady.body())
+
+        consumerHealth.assigned(1)
+        consumerHealth.polled()
+        val ready = get("/readyz")
+        assertEquals(200, ready.statusCode())
+        assertTrue(ready.body().contains(""""ready":true"""), ready.body())
+        assertTrue(ready.body().contains(""""database":{"ok":true}"""), ready.body())
     }
 
     @Test
@@ -89,6 +132,7 @@ class DashboardServerTest {
         assertEquals("application/json", response.headers().firstValue("Content-Type").get())
         assertTrue(response.body().startsWith("""{"v":1,"positions":["""), response.body())
         assertTrue(response.body().contains(""""limits":{"""), response.body())
+        assertTrue(response.body().contains(""""sync":{"""), response.body())
     }
 
     @Test
@@ -108,6 +152,23 @@ class DashboardServerTest {
             )
         assertEquals(405, response.statusCode())
         assertEquals("GET", response.headers().firstValue("Allow").get())
+    }
+
+    @Test
+    fun `a server wired without a readiness probe reports plain readiness`() {
+        val bare = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0)
+        bare.start()
+        try {
+            val response =
+                client.send(
+                    HttpRequest.newBuilder(URI("http://127.0.0.1:${bare.boundPort}/readyz")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString(),
+                )
+            assertEquals(200, response.statusCode())
+            assertEquals("""{"ready":true}""", response.body())
+        } finally {
+            bare.stop()
+        }
     }
 
     @Test
@@ -134,7 +195,7 @@ class DashboardServerTest {
             }
 
         assertTrue(initial.await(5, TimeUnit.SECONDS), "initial snapshot frame")
-        capture.onFill(Fill("SIM", BigDecimal("100.00"), 3, 1, 2, Side.BID, 1000))
+        capture.onFill(Fill("SIM", BigDecimal("100.00"), 3, 1, 2, Side.BID, 1000), FillSource("orderbook.fills", 0, 1))
         assertTrue(pushed.await(5, TimeUnit.SECONDS), "a fill pushes a fresh snapshot: ${synchronized(lines) { lines.toList() }}")
         reader.interrupt()
     }

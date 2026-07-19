@@ -14,7 +14,12 @@ fun interface RecordHandler {
  * fails to parse goes straight to the dead-letter topic — malformed input never heals, so
  * retrying it only stalls the stream. A record whose *handling* fails (the database blinked, the
  * broker hiccuped) is retried up to [attempts] times, [backoff] apart, and dead-lettered on
- * exhaustion. Either way the consumer thread survives and the stream keeps moving.
+ * exhaustion. Retrying the whole handler is safe because application is idempotent: the fill
+ * ledger's unique key means an attempt that half-succeeded cannot apply again on the next try.
+ *
+ * A [DeadLetterPublishException] propagates: an unacknowledged dead-letter send means the record
+ * is in neither stream, so the batch must not commit — the process fails fast and the committed
+ * offset replays it, which idempotent application makes safe.
  *
  * [sleep] is injectable so tests drive the backoff without real waiting.
  */
@@ -37,11 +42,14 @@ class RetryingHandler(
                 deadLetters.publish(record, e)
                 return
             }
+        val source = FillSource(record.topic(), record.partition(), record.offset())
         var attempt = 1
         while (true) {
             try {
-                handler.onFill(fill)
+                handler.onFill(fill, source)
                 return
+            } catch (e: DeadLetterPublishException) {
+                throw e
             } catch (e: Exception) {
                 if (attempt == attempts) {
                     deadLetters.publish(record, e)

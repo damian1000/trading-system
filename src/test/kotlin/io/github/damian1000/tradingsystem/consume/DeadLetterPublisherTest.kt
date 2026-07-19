@@ -4,15 +4,17 @@ import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.apache.kafka.clients.producer.MockProducer
 import org.apache.kafka.common.serialization.StringSerializer
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 
 class DeadLetterPublisherTest {
     private fun record(value: String = """{"bad":true}""") = ConsumerRecord("orderbook.fills", 0, 42L, "SIM", value)
 
     @Test
-    fun `publishes the original record with error and source headers`() {
+    fun `publishes the original record with error and source headers, confirmed by the broker`() {
         val producer = MockProducer(true, null, StringSerializer(), StringSerializer())
         val publisher = DeadLetterPublisher(producer, "orderbook.fills.DLT")
 
@@ -51,13 +53,14 @@ class DeadLetterPublisherTest {
     }
 
     @Test
-    fun `a failed send is counted, not thrown`() {
+    fun `an unacknowledged send throws and is counted — the caller must not commit past it`() {
+        // Auto-complete off: the broker never acks within the confirm window.
         val producer = MockProducer(false, null, StringSerializer(), StringSerializer())
-        val publisher = DeadLetterPublisher(producer)
+        val publisher = DeadLetterPublisher(producer, confirmTimeout = Duration.ofMillis(50))
 
-        publisher.publish(record(), IllegalArgumentException("boom"))
-        producer.errorNext(RuntimeException("broker unreachable"))
-
+        assertThrows(DeadLetterPublishException::class.java) {
+            publisher.publish(record(), IllegalArgumentException("boom"))
+        }
         assertEquals(0L, publisher.published)
         assertEquals(1L, publisher.failed)
     }

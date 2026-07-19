@@ -1,6 +1,5 @@
 package io.github.damian1000.tradingsystem.position
 
-import io.github.damian1000.tradingsystem.consume.Fill
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
 
@@ -16,24 +15,18 @@ data class Position(
 )
 
 /**
- * Net position per symbol, booked from the taker side of each fill: a BID aggressor bought
- * [Fill.size], an OFFER aggressor sold it. In-memory view of the [PositionStore]'s truth —
- * [restore] warms it from the store at startup. Thread-safe: the consumer thread writes, web
- * threads read.
+ * Net position per symbol: the in-memory mirror of the [PositionStore]'s truth. Rows arrive
+ * only from committed store transactions — [put] after each applied fill, [restore] from the
+ * store at startup — so the book can never run ahead of the database. Thread-safe: the consumer
+ * thread writes, web threads read.
  */
 class PositionBook {
     private val positions = ConcurrentHashMap<String, Position>()
 
-    /** Books the fill and returns the updated position. */
-    fun apply(fill: Fill): Position =
-        positions.compute(fill.symbol) { _, current ->
-            Position(
-                symbol = fill.symbol,
-                quantity = (current?.quantity ?: 0L) + fill.signedSize,
-                lastPrice = fill.price,
-                lastTimeMillis = fill.timeMillis,
-            )
-        }!!
+    /** Replaces the symbol's position with the row the store committed. */
+    fun put(position: Position) {
+        positions[position.symbol] = position
+    }
 
     fun positionOf(symbol: String): Position? = positions[symbol]
 

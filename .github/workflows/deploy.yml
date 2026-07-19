@@ -116,7 +116,7 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -seuo pipefail' <<'REMOTE'
           for attempt in $(seq 1 20); do
-            code="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8082/healthz || true)"
+            code="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8082/readyz || true)"
             if [ "$code" = "200" ]; then
               echo "healthy after ${attempt} attempt(s)"
               exit 0

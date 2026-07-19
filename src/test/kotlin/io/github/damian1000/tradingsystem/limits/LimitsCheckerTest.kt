@@ -1,5 +1,7 @@
 package io.github.damian1000.tradingsystem.limits
 
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
+import io.github.damian1000.tradingsystem.consume.Fill
 import org.apache.kafka.clients.consumer.ConsumerRecord
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -175,6 +177,56 @@ class LimitsCheckerTest {
                 .netQuantity,
         )
     }
+
+    @Test
+    fun `warm rebuilds the same state a live replay of those fills would`() {
+        val live = LimitsChecker(limits)
+        live.handle(fill(size = 12, ts = 1000))
+        live.handle(fill(size = 5, aggressor = "OFFER", ts = 2000))
+
+        val warmed = LimitsChecker(limits)
+        warmed.warm(
+            listOf(
+                parsedFill(size = 12, ts = 1000),
+                parsedFill(size = 5, aggressor = "OFFER", ts = 2000),
+            ),
+            ConsumerProgress(1, 2000),
+        )
+
+        val liveReport = live.report()
+        val warmedReport = warmed.report()
+        assertEquals(liveReport.symbols, warmedReport.symbols, "exposures match a live consumption of the same fills")
+        assertEquals(liveReport.events, warmedReport.events, "breach history rebuilds too — events carry fill time")
+        assertEquals(1, warmedReport.progress?.offset)
+    }
+
+    @Test
+    fun `progress tracks the last handled record's offset and fill time`() {
+        assertEquals(null, checker.report().progress, "no progress before the first fill")
+        checker.handle(
+            ConsumerRecord(
+                "orderbook.fills",
+                0,
+                41,
+                "SIM",
+                """{"v":1,"symbol":"SIM","price":"101.00000000","size":4,""" +
+                    """"makerOrderId":1,"takerOrderId":2,"aggressor":"BID","ts":7000}""",
+            ),
+        )
+
+        val progress = checker.report().progress
+        assertEquals(41, progress?.offset)
+        assertEquals(7000, progress?.fillTimeMillis)
+    }
+
+    private fun parsedFill(
+        size: Long,
+        aggressor: String = "BID",
+        ts: Long = 1000,
+    ) = Fill.parse(
+        """{"v":1,"symbol":"SIM","price":"101.00000000","size":$size,""" +
+            """"makerOrderId":1,"takerOrderId":2,"aggressor":"$aggressor","ts":$ts}""",
+    )
 
     @Test
     fun `limits must be positive`() {

@@ -22,12 +22,17 @@ class RetryingHandlerTest {
         private val failures: Int,
     ) : FillHandler {
         val fills = mutableListOf<Fill>()
+        val sources = mutableListOf<FillSource>()
         var calls = 0
 
-        override fun onFill(fill: Fill) {
+        override fun onFill(
+            fill: Fill,
+            source: FillSource,
+        ) {
             calls++
             if (calls <= failures) throw IllegalStateException("transient failure $calls")
             fills.add(fill)
+            sources.add(source)
         }
     }
 
@@ -36,7 +41,7 @@ class RetryingHandlerTest {
     private fun mockProducer() = MockProducer(true, null, StringSerializer(), StringSerializer())
 
     @Test
-    fun `a healthy record is handled once, no retries, no dead letters`() {
+    fun `a healthy record is handled once with its stream coordinates, no retries, no dead letters`() {
         val producer = mockProducer()
         val handler = CountingHandler(failures = 0)
         val sleeps = mutableListOf<Duration>()
@@ -45,6 +50,7 @@ class RetryingHandlerTest {
 
         assertEquals(1, handler.calls)
         assertEquals("SIM", handler.fills.single().symbol)
+        assertEquals(FillSource("orderbook.fills", 0, 7L), handler.sources.single())
         assertTrue(sleeps.isEmpty())
         assertTrue(producer.history().isEmpty())
     }
@@ -92,6 +98,31 @@ class RetryingHandlerTest {
         assertEquals(0, handler.calls, "malformed input never reaches the handler")
         assertTrue(sleeps.isEmpty(), "malformed input never heals, so retrying it is pure stall")
         assertEquals("not json", producer.history().single().value())
+    }
+
+    @Test
+    fun `an unacknowledged dead-letter send propagates — the record must not be lost silently`() {
+        // Auto-complete off and a tiny confirm window: the send never acks, publish throws.
+        val producer = MockProducer(false, null, StringSerializer(), StringSerializer())
+        val stalled = DeadLetterPublisher(producer, "orderbook.fills.DLT", confirmTimeout = Duration.ofMillis(50))
+        val handler = CountingHandler(failures = 99)
+
+        assertThrows(DeadLetterPublishException::class.java) {
+            RetryingHandler(handler, stalled, attempts = 1, sleep = {}).handle(record(goodJson))
+        }
+        assertEquals(1, stalled.failed, "the failure is counted for the readiness probe")
+    }
+
+    @Test
+    fun `a dead-letter failure from inside the handler is not treated as retriable`() {
+        val handler =
+            FillHandler { _, _ -> throw DeadLetterPublishException(IllegalStateException("no ack")) }
+        val sleeps = mutableListOf<Duration>()
+
+        assertThrows(DeadLetterPublishException::class.java) {
+            RetryingHandler(handler, publisher(mockProducer()), attempts = 3, sleep = sleeps::add).handle(record(goodJson))
+        }
+        assertTrue(sleeps.isEmpty(), "an unacknowledged dead letter halts; retrying would risk committing past it")
     }
 
     @Test

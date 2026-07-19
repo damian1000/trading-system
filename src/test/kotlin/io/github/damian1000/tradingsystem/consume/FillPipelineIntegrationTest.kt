@@ -6,9 +6,11 @@ import io.github.damian1000.tradingsystem.limits.LimitKind
 import io.github.damian1000.tradingsystem.limits.LimitsChecker
 import io.github.damian1000.tradingsystem.limits.LimitsReport
 import io.github.damian1000.tradingsystem.limits.RiskLimits
+import io.github.damian1000.tradingsystem.position.Ledger
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
+import io.github.damian1000.tradingsystem.position.RecordOutcome
 import io.github.damian1000.tradingsystem.pricing.MarketAssumptions
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import io.github.damian1000.tradingsystem.web.Broadcaster
@@ -30,6 +32,7 @@ import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
@@ -48,13 +51,28 @@ class FillPipelineIntegrationTest {
     }
 
     private class CollectingStore : PositionStore {
-        val saved = ConcurrentLinkedQueue<Position>()
+        val applied = ConcurrentLinkedQueue<Pair<Fill, FillSource>>()
+        private val ledger = ConcurrentHashMap<FillSource, Fill>()
+        private val positions = ConcurrentHashMap<String, Position>()
 
-        override fun save(position: Position) {
-            saved.add(position)
+        override fun record(
+            fill: Fill,
+            source: FillSource,
+        ): RecordOutcome {
+            if (ledger.putIfAbsent(source, fill) != null) return RecordOutcome.Duplicate
+            val updated =
+                positions.compute(fill.symbol) { _, current ->
+                    Position(fill.symbol, (current?.quantity ?: 0L) + fill.signedSize, fill.price, fill.timeMillis)
+                }!!
+            applied.add(fill to source)
+            return RecordOutcome.Applied(updated)
         }
 
-        override fun loadAll(): List<Position> = saved.toList()
+        override fun loadAll(): List<Position> = positions.values.sortedBy { it.symbol }
+
+        override fun loadLedger(topic: String): Ledger = Ledger(applied.map { it.first }, emptyMap())
+
+        override fun ping(): Boolean = true
     }
 
     private class SilentBroadcaster : Broadcaster {
@@ -90,7 +108,8 @@ class FillPipelineIntegrationTest {
                 store,
                 RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default()),
                 SilentBroadcaster(),
-            ) { emptyLimits() }
+                limitsView = { emptyLimits() },
+            )
         val deadLetters = DeadLetterPublisher.create(kafka.bootstrapServers, dlt)
         val consumer =
             FillConsumer.create(
@@ -114,7 +133,11 @@ class FillPipelineIntegrationTest {
         consumer.start()
         try {
             awaitTrue("both healthy fills should be booked") { book.positionOf("SIM")?.quantity == 3L }
-            assertEquals(2, store.saved.size, "one persisted position per healthy fill")
+            assertEquals(2, store.applied.size, "one ledger entry per healthy fill")
+            assertTrue(
+                store.applied.all { (_, source) -> source.topic == topic && source.offset >= 0 },
+                "every ledger entry carries its stream coordinates",
+            )
 
             // The poison record must be on the DLT with its provenance, original payload untouched.
             val dead = consumeOne(dlt)
@@ -149,12 +172,14 @@ class FillPipelineIntegrationTest {
                 handler = RetryingHandler(capture, deadLetters, backoff = Duration.ofMillis(10)),
                 clientId = "fanout-it-positions",
             )
+        // The limits path attaches the way production does: no group, seeking from the ledger's
+        // high-water mark — here empty, so the whole retained stream replays.
         val limitsConsumer =
-            FillConsumer.create(
+            FillConsumer.createSeeking(
                 bootstrapServers = kafka.bootstrapServers,
-                groupId = "fanout-it.limits",
                 topic = topic,
                 handler = limitsChecker,
+                startOffsets = emptyMap(),
                 clientId = "fanout-it-limits",
             )
 

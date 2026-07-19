@@ -9,17 +9,28 @@ import org.apache.kafka.common.serialization.StringSerializer
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+
+/** A dead-letter send the broker did not acknowledge; the source record must not be committed past. */
+class DeadLetterPublishException(
+    cause: Throwable,
+) : RuntimeException("dead-letter publish was not acknowledged", cause)
 
 /**
  * Publishes records the consumer has given up on to the dead-letter topic: the original key and
  * payload untouched, plus headers recording where the record came from and why it failed, so an
- * operator can inspect and replay it. A failed dead-letter send is counted in [failed] and the
- * stream moves on — the DLT being sick must not stall the consumer too.
+ * operator can inspect and replay it.
+ *
+ * [publish] returns only after the broker acknowledges the send, and throws
+ * [DeadLetterPublishException] otherwise — the caller must not commit the source offset past a
+ * record that is in neither stream. A record is either applied, or on the DLT, or still ahead
+ * of the committed offset; it can never be in none of those places.
  */
 class DeadLetterPublisher(
     private val producer: Producer<String, String>,
     private val topic: String = DEFAULT_TOPIC,
+    private val confirmTimeout: Duration = DEFAULT_CONFIRM_TIMEOUT,
 ) : AutoCloseable {
     private val publishedCount = AtomicLong()
     private val failedCount = AtomicLong()
@@ -43,13 +54,16 @@ class DeadLetterPublisher(
             .add("dlt.source.partition", utf8(record.partition().toString()))
             .add("dlt.source.offset", utf8(record.offset().toString()))
         try {
-            producer.send(out) { _, exception ->
-                if (exception == null) publishedCount.incrementAndGet() else failedCount.incrementAndGet()
-            }
-        } catch (_: RuntimeException) {
-            // send() can also fail synchronously (metadata timeout, serialization).
+            producer.send(out).get(confirmTimeout.toMillis(), TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
             failedCount.incrementAndGet()
+            throw DeadLetterPublishException(e)
+        } catch (e: Exception) {
+            failedCount.incrementAndGet()
+            throw DeadLetterPublishException(e)
         }
+        publishedCount.incrementAndGet()
     }
 
     /** Flushes in-flight sends and closes the producer. */
@@ -61,6 +75,7 @@ class DeadLetterPublisher(
 
     companion object {
         const val DEFAULT_TOPIC = "orderbook.fills.DLT"
+        val DEFAULT_CONFIRM_TIMEOUT: Duration = Duration.ofSeconds(10)
         private val CLOSE_TIMEOUT = Duration.ofSeconds(5)
 
         /** A publisher over a real [KafkaProducer], timeouts tightened so a dead broker surfaces in seconds. */

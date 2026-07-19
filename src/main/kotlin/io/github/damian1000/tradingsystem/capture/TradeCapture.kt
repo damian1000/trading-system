@@ -1,28 +1,36 @@
 package io.github.damian1000.tradingsystem.capture
 
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import io.github.damian1000.tradingsystem.consume.Fill
+import io.github.damian1000.tradingsystem.consume.FillSource
 import io.github.damian1000.tradingsystem.limits.LimitsView
 import io.github.damian1000.tradingsystem.position.PositionBook
 import io.github.damian1000.tradingsystem.position.PositionStore
+import io.github.damian1000.tradingsystem.position.RecordOutcome
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import io.github.damian1000.tradingsystem.view.DashboardSnapshot
 import io.github.damian1000.tradingsystem.web.Broadcaster
 import java.math.BigDecimal
+import java.util.concurrent.atomic.AtomicLong
 
 /** What consumes parsed fills; [TradeCapture] is the production pipeline. */
 fun interface FillHandler {
-    fun onFill(fill: Fill)
+    fun onFill(
+        fill: Fill,
+        source: FillSource,
+    )
 }
 
 /**
- * The application service on the consumer thread: books each fill into the [PositionBook],
- * persists the updated position, reprices the book through the [RiskGateway], and hands the
- * fresh snapshot to the [Broadcaster]. Failures propagate to the caller — the consumer's
- * retry→DLT policy decides what happens next, not this class.
+ * The application service on the consumer thread. Each fill goes to [PositionStore.record]
+ * first — the transactional ledger insert plus position move — and memory changes only from the
+ * committed result, so a retried or redelivered record can never move a position twice: the
+ * ledger's unique key reports it as a duplicate and the book is left alone. Failures propagate
+ * to the caller — the consumer's retry→DLT policy decides what happens next, not this class.
  *
- * The first fill this process sees marks the session open; day PnL measures from it. A restart
- * therefore restarts the PnL clock — positions survive (restored from the store), the open mark
- * does not.
+ * The first fill this process applies marks the session open; day PnL measures from it. A
+ * restart therefore restarts the PnL clock — positions survive (restored from the store), the
+ * open mark does not.
  */
 class TradeCapture(
     private val book: PositionBook,
@@ -30,14 +38,35 @@ class TradeCapture(
     private val risk: RiskGateway,
     private val broadcaster: Broadcaster,
     private val limitsView: LimitsView,
+    initialProgress: ConsumerProgress? = null,
 ) : FillHandler {
     @Volatile
     private var openPrice: BigDecimal? = null
 
-    override fun onFill(fill: Fill) {
-        if (openPrice == null) openPrice = fill.price
-        store.save(book.apply(fill))
-        broadcaster.broadcast(snapshot().toJson())
+    @Volatile
+    private var progress: ConsumerProgress? = initialProgress
+
+    private val duplicateCount = AtomicLong()
+
+    /** Replayed records the ledger rejected — nonzero after a retry, redelivery, or restart replay. */
+    val duplicates: Long get() = duplicateCount.get()
+
+    override fun onFill(
+        fill: Fill,
+        source: FillSource,
+    ) {
+        when (val outcome = store.record(fill, source)) {
+            is RecordOutcome.Applied -> {
+                if (openPrice == null) openPrice = fill.price
+                book.put(outcome.position)
+                progress = ConsumerProgress(source.offset, fill.timeMillis)
+                broadcaster.broadcast(snapshot().toJson())
+            }
+            RecordOutcome.Duplicate -> {
+                duplicateCount.incrementAndGet()
+                progress = ConsumerProgress(source.offset, fill.timeMillis)
+            }
+        }
     }
 
     /**
@@ -46,6 +75,13 @@ class TradeCapture(
      */
     fun snapshot(): DashboardSnapshot {
         val positions = book.all()
-        return DashboardSnapshot(positions, openPrice, risk.report(positions.firstOrNull(), openPrice), limitsView.report())
+        return DashboardSnapshot(
+            positions = positions,
+            openPrice = openPrice,
+            report = risk.report(positions.firstOrNull(), openPrice),
+            limits = limitsView.report(),
+            positionsProgress = progress,
+            duplicates = duplicates,
+        )
     }
 }

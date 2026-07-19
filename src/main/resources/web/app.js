@@ -173,9 +173,14 @@ function renderLimits(limits) {
 
 function renderSession(snapshot) {
   const open = snapshot.openPrice;
+  const sync = snapshot.sync;
+  const offset = (p) => (p == null ? "—" : `@${p.offset}`);
   const rows = [
     ["Session open", open == null ? "—" : money.format(open)],
     ["Instruments", String(snapshot.positions.length)],
+    ["Positions view", offset(sync.positions)],
+    ["Limits view", offset(sync.limits)],
+    ["Replays dropped", qty.format(sync.duplicatesDropped)],
   ]
     .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)
     .join("");
@@ -183,17 +188,58 @@ function renderSession(snapshot) {
     `<div class="report-block"><table class="risk"><tbody>${rows}</tbody></table></div>`;
 }
 
+/* The two consumer paths are independent; say when they describe different stream positions
+   instead of letting a half-updated screen pass as consistent. */
+function renderSync(sync) {
+  const el = $("sync");
+  if (sync.coherent) {
+    el.textContent = "in sync";
+    el.className = "pos";
+  } else {
+    el.textContent = "catching up";
+    el.className = "neg";
+  }
+}
+
+const MARK_STALE_MILLIS = 10 * 60 * 1000;
+
+function renderMarkAge() {
+  const el = $("mark-age");
+  const ts = lastSnapshot?.positions[0]?.lastTimeMillis;
+  if (ts == null) {
+    el.textContent = "—";
+    el.className = "";
+    return;
+  }
+  const age = Date.now() - ts;
+  const minutes = Math.floor(age / 60000);
+  el.textContent =
+    minutes < 1
+      ? "fresh"
+      : minutes < 60
+        ? `${minutes}m old`
+        : `${Math.floor(minutes / 60)}h old`;
+  el.className = age > MARK_STALE_MILLIS ? "neg" : "pos";
+}
+
 let updates = 0;
+let lastSnapshot = null;
 
 function render(snapshot) {
   updates++;
+  lastSnapshot = snapshot;
   $("updates").textContent = String(updates);
   renderStats(snapshot);
   renderPositions(snapshot.positions);
   renderReport(snapshot.report);
   renderLimits(snapshot.limits);
   renderSession(snapshot);
+  renderSync(snapshot.sync);
+  renderMarkAge();
 }
+
+/* The mark ages between fills; keep its age truthful even when the stream is quiet. */
+setInterval(renderMarkAge, 30000);
 
 function connect() {
   const stream = new EventSource("api/stream");

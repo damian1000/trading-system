@@ -1,12 +1,14 @@
 package io.github.damian1000.tradingsystem.view
 
 import io.github.damian1000.riskengine.report.RiskReportAssembler
+import io.github.damian1000.tradingsystem.consume.ConsumerProgress
 import io.github.damian1000.tradingsystem.limits.LimitsReport
 import io.github.damian1000.tradingsystem.limits.RiskLimits
 import io.github.damian1000.tradingsystem.position.Position
 import io.github.damian1000.tradingsystem.pricing.MarketAssumptions
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -18,7 +20,8 @@ class DashboardSnapshotTest {
     fun `an untraded system serialises to an explicitly empty state`() {
         assertEquals(
             """{"v":1,"positions":[],"openPrice":null,"report":null,""" +
-                """"limits":{"maxPosition":50,"maxNotional":5000,"symbols":[],"events":[],"malformed":0}}""",
+                """"limits":{"maxPosition":50,"maxNotional":5000,"symbols":[],"events":[],"malformed":0,"progress":null},""" +
+                """"sync":{"positions":null,"limits":null,"coherent":true,"duplicatesDropped":0}}""",
             DashboardSnapshot(emptyList(), null, null, emptyLimits).toJson(),
         )
     }
@@ -42,6 +45,30 @@ class DashboardSnapshotTest {
         assertTrue(json.contains(""""greeks":{"""), "the report JSON is embedded as-is")
         assertTrue(json.contains(""""pnl":{"""), "a session-open mark yields day PnL")
         assertTrue(json.contains(""""limits":{"maxPosition":50,"""), "the limits JSON is embedded as-is")
+    }
+
+    @Test
+    fun `matching stream positions are coherent, diverged ones are flagged`() {
+        val limitsAt = emptyLimits.copy(progress = ConsumerProgress(7, 1000))
+        val together = DashboardSnapshot(emptyList(), null, null, limitsAt, ConsumerProgress(7, 1000), duplicates = 2)
+        assertTrue(together.coherent)
+        assertTrue(
+            together.toJson().contains(
+                """"sync":{"positions":{"offset":7,"fillTs":1000},"limits":{"offset":7,"fillTs":1000},""" +
+                    """"coherent":true,"duplicatesDropped":2}""",
+            ),
+            together.toJson(),
+        )
+
+        val apart = DashboardSnapshot(emptyList(), null, null, limitsAt, ConsumerProgress(9, 3000))
+        assertFalse(apart.coherent, "the two views describe different stream positions")
+        assertTrue(apart.toJson().contains(""""coherent":false"""))
+    }
+
+    @Test
+    fun `one warmed view beside one empty view is not coherent`() {
+        val snapshot = DashboardSnapshot(emptyList(), null, null, emptyLimits, ConsumerProgress(7, 1000))
+        assertFalse(snapshot.coherent)
     }
 
     @Test
