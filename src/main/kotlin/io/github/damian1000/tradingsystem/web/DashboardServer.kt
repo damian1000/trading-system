@@ -65,7 +65,15 @@ class DashboardServer(
             "/app.css" -> get(exchange) { respond(exchange, 200, "text/css; charset=utf-8", assets.appCss) }
             "/app.js" -> get(exchange) { respond(exchange, 200, "text/javascript; charset=utf-8", assets.appJs) }
             "/api/state" -> get(exchange) { respond(exchange, 200, "application/json", capture.snapshot().toJson()) }
-            "/api/stream" -> get(exchange) { broadcaster.stream(exchange, capture.snapshot().toJson()) }
+            "/api/stream" ->
+                get(exchange) {
+                    // A HEAD must not attach to the broadcaster — it wants headers, not a stream.
+                    if (exchange.requestMethod == "HEAD") {
+                        respond(exchange, 200, "text/event-stream", "")
+                    } else {
+                        broadcaster.stream(exchange, capture.snapshot().toJson())
+                    }
+                }
             else -> respond(exchange, 404, "text/plain", "not found")
         }
     }
@@ -80,14 +88,16 @@ class DashboardServer(
         }
     }
 
+    // HEAD rides every GET route: the handler runs identically and respond() suppresses the body,
+    // so the status and headers a HEAD probe sees are the ones the GET would have produced.
     private inline fun get(
         exchange: HttpExchange,
         handler: () -> Unit,
     ) {
-        if (exchange.requestMethod == "GET") {
+        if (exchange.requestMethod == "GET" || exchange.requestMethod == "HEAD") {
             handler()
         } else {
-            exchange.responseHeaders.add("Allow", "GET")
+            exchange.responseHeaders.add("Allow", "GET, HEAD")
             respond(exchange, 405, "text/plain", "method not allowed")
         }
     }
@@ -100,7 +110,14 @@ class DashboardServer(
     ) {
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
         exchange.responseHeaders.add("Content-Type", contentType)
-        exchange.sendResponseHeaders(status, bytes.size.toLong())
-        exchange.responseBody.use { it.write(bytes) }
+        if (exchange.requestMethod == "HEAD") {
+            // Headers only: -1 tells the JDK server no body follows, which is the one length it
+            // accepts on a HEAD without logging a warning (it drops Content-Length either way).
+            exchange.sendResponseHeaders(status, -1)
+            exchange.close()
+        } else {
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
     }
 }

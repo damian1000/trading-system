@@ -156,8 +156,35 @@ class DashboardServerTest {
                 HttpResponse.BodyHandlers.ofString(),
             )
         assertEquals(405, response.statusCode())
-        assertEquals("GET", response.headers().firstValue("Allow").get())
+        assertEquals("GET, HEAD", response.headers().firstValue("Allow").get())
     }
+
+    @Test
+    fun `HEAD answers every GET route with the GET's status and headers, minus the body`() {
+        for (path in listOf("/", "/healthz", "/readyz", "/app.css", "/app.js", "/api/state")) {
+            val head = head(path)
+            assertEquals(get(path).statusCode(), head.statusCode(), path)
+            assertEquals("", head.body(), path)
+        }
+        assertEquals("text/html; charset=utf-8", head("/").headers().firstValue("Content-Type").get())
+    }
+
+    @Test
+    fun `HEAD on the stream answers headers without attaching to the broadcaster`() {
+        val response = head("/api/stream")
+        assertEquals(200, response.statusCode())
+        assertEquals("text/event-stream", response.headers().firstValue("Content-Type").get())
+        assertEquals("", response.body())
+    }
+
+    private fun head(path: String): HttpResponse<String> =
+        client.send(
+            HttpRequest
+                .newBuilder(URI("http://127.0.0.1:${server.boundPort}$path"))
+                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
 
     @Test
     fun `a server wired without a readiness probe reports plain readiness`() {
