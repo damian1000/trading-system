@@ -7,14 +7,18 @@ import io.github.damian1000.tradingsystem.health.Readiness
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * HTTP transport for the dashboard: the static UI, the current state as JSON, and an SSE stream
  * that pushes a fresh snapshot on every fill. Plumbing only — every number comes from
  * [TradeCapture]'s snapshot over risk-engine's calculators, and the front end is a thin renderer
  * of [io.github.damian1000.tradingsystem.view.DashboardSnapshot.toJson]. JDK [HttpServer] on a
- * cached pool, no web framework.
+ * request pool capped at [maxPoolThreads], no web framework; each SSE stream pins one pool thread
+ * for its connection's lifetime, and requests beyond the cap are refused at the connection rather
+ * than queued.
  */
 class DashboardServer(
     private val capture: TradeCapture,
@@ -22,6 +26,7 @@ class DashboardServer(
     private val assets: WebAssets,
     private val port: Int,
     private val readiness: Readiness? = null,
+    private val maxPoolThreads: Int = 64,
 ) {
     private lateinit var server: HttpServer
     private lateinit var executor: ExecutorService
@@ -29,7 +34,14 @@ class DashboardServer(
     /** Binds and starts serving; requesting port 0 binds an ephemeral port (see [boundPort]). */
     fun start() {
         server = HttpServer.create(InetSocketAddress(port), 0)
-        executor = Executors.newCachedThreadPool { Thread(it).apply { isDaemon = true } }
+        // Cached-pool reuse and keep-alive but with a hard thread ceiling: SSE streams hold their
+        // pool thread, so an unbounded pool lets slow-reading clients grow memory without limit.
+        // No work queue — a request queued behind saturated SSE streams would wait forever, so
+        // saturation refuses the new connection instead.
+        executor =
+            ThreadPoolExecutor(0, maxPoolThreads, 60L, TimeUnit.SECONDS, SynchronousQueue()) {
+                Thread(it).apply { isDaemon = true }
+            }
         server.executor = executor
         server.createContext("/", ::route)
         server.start()

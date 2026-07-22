@@ -18,12 +18,15 @@ import io.github.damian1000.tradingsystem.pricing.MarketAssumptions
 import io.github.damian1000.tradingsystem.pricing.RiskGateway
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import java.io.BufferedReader
+import java.io.IOException
 import java.math.BigDecimal
+import java.net.HttpURLConnection
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -170,6 +173,33 @@ class DashboardServerTest {
             assertEquals("""{"ready":true}""", response.body())
         } finally {
             bare.stop()
+        }
+    }
+
+    // Rejection happens before any handler runs, so the refused connection closes with no HTTP
+    // status line — the client sees a connection-level failure, which is the documented contract.
+    @Test
+    fun `requests beyond the thread cap are refused rather than queued`() {
+        val bounded = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0, maxPoolThreads = 2)
+        bounded.start()
+        val streams = mutableListOf<HttpURLConnection>()
+        try {
+            repeat(2) {
+                val connection =
+                    URI("http://127.0.0.1:${bounded.boundPort}/api/stream").toURL().openConnection() as HttpURLConnection
+                connection.readTimeout = 5_000
+                val reader = connection.inputStream.bufferedReader()
+                while (true) {
+                    val line = reader.readLine() ?: error("stream closed before a data frame arrived")
+                    if (line.startsWith("data: ")) break
+                }
+                streams.add(connection)
+            }
+            val request = HttpRequest.newBuilder(URI("http://127.0.0.1:${bounded.boundPort}/healthz")).GET().build()
+            assertThrows(IOException::class.java) { client.send(request, HttpResponse.BodyHandlers.ofString()) }
+        } finally {
+            streams.forEach { it.disconnect() }
+            bounded.stop()
         }
     }
 
