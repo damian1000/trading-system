@@ -115,14 +115,22 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -seuo pipefail' <<'REMOTE'
+          probe() { curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8082/readyz || true; }
+          ready=""
           for attempt in $(seq 1 20); do
-            code="$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost:8082/readyz || true)"
-            if [ "$code" = "200" ]; then
-              echo "healthy after ${attempt} attempt(s)"
-              exit 0
+            if [ "$(probe)" = "200" ]; then
+              ready=1
+              echo "ready after ${attempt} attempt(s)"
+              break
             fi
             sleep 3
           done
-          echo "health check failed (last status: ${code:-none})"
-          exit 1
+          [ -n "$ready" ] || { echo "never became ready"; exit 1; }
+          # Readiness must still hold ~30s later, past the coherence grace window, so a deploy
+          # can't go green by probing in the seconds before the fill consumer's first coherence
+          # halt (the 2026-07-19 ORA-12838 incident) — /readyz is 503 while the views disagree.
+          sleep 30
+          code="$(probe)"
+          [ "$code" = "200" ] || { echo "readiness did not hold across the coherence window (last status: ${code:-none})"; exit 1; }
+          echo "readiness held across the coherence window"
           REMOTE
