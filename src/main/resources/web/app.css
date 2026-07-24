@@ -208,6 +208,28 @@ a:hover {
   color: var(--ink-4);
 }
 
+.prose-wrap {
+  flex: 1;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 14px;
+}
+
+.prose {
+  padding: 14px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.prose p {
+  margin: 0 0 10px;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
 .side {
   display: flex;
   flex-direction: column;

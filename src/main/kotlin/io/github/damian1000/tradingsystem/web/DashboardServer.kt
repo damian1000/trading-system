@@ -62,6 +62,7 @@ class DashboardServer(
             "/healthz" -> get(exchange) { respond(exchange, 200, "text/plain", "ok") }
             "/readyz" -> get(exchange) { ready(exchange) }
             "/" -> get(exchange) { respond(exchange, 200, "text/html; charset=utf-8", assets.indexHtml) }
+            "/privacy" -> get(exchange) { respond(exchange, 200, "text/html; charset=utf-8", assets.privacyHtml) }
             "/app.css" -> get(exchange) { respond(exchange, 200, "text/css; charset=utf-8", assets.appCss) }
             "/app.js" -> get(exchange) { respond(exchange, 200, "text/javascript; charset=utf-8", assets.appJs) }
             "/api/state" -> get(exchange) { respond(exchange, 200, "application/json", capture.snapshot().toJson()) }
