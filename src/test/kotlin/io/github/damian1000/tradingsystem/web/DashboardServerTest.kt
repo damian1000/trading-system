@@ -104,6 +104,14 @@ class DashboardServerTest {
     }
 
     @Test
+    fun `serves the privacy notice`() {
+        val response = get("/privacy")
+        assertEquals(200, response.statusCode())
+        assertEquals("text/html; charset=utf-8", response.headers().firstValue("Content-Type").get())
+        assertTrue(response.body().contains("Privacy"), response.body())
+    }
+
+    @Test
     fun `readyz answers 503 with the failing component named until the pipeline is healthy`() {
         // The consumer thread exists but has not polled with an assignment yet.
         val notReady = get("/readyz")
@@ -161,7 +169,7 @@ class DashboardServerTest {
 
     @Test
     fun `HEAD answers every GET route with the GET's status and headers, minus the body`() {
-        for (path in listOf("/", "/healthz", "/readyz", "/app.css", "/app.js", "/api/state")) {
+        for (path in listOf("/", "/healthz", "/readyz", "/privacy", "/app.css", "/app.js", "/api/state")) {
             val head = head(path)
             assertEquals(get(path).statusCode(), head.statusCode(), path)
             assertEquals("", head.body(), path)
