@@ -150,7 +150,7 @@ class Readiness(
      * The conservation check's standing verdict, per derived view. Divergences are named
      * individually with both quantities: an operator seeing 503 needs the view, the symbol and the
      * size of the gap, and there is nothing secret in any of them — they are the same numbers the
-     * public dashboard already serves.
+     * desk already serves publicly.
      */
     private fun ledgerState(): LedgerState {
         val latest = reconciliation()

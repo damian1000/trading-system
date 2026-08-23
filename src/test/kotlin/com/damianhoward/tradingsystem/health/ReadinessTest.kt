@@ -391,7 +391,7 @@ class ReadinessTest {
     @Test
     fun `a limits view that disagrees with the ledger at a matching offset fails the probe`() {
         // Nothing else in the service would notice. The limits consumer never reads the position
-        // book by design, so its exposures can be wrong while positions, risk and the dashboard
+        // book by design, so its exposures can be wrong while positions, risk and the desk
         // all agree with each other.
         healthyConsumer()
         val totals = listOf(SymbolTotals("SIM", 10, 10))

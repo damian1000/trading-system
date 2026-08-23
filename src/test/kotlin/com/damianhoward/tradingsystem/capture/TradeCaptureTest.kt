@@ -151,7 +151,7 @@ class TradeCaptureTest {
     }
 
     @Test
-    fun `the snapshot carries the dead-letter count for the dashboard's operator flag`() {
+    fun `the snapshot carries the dead-letter count for the desk's operator flag`() {
         val withDeadLetters =
             TradeCapture(
                 book = book,

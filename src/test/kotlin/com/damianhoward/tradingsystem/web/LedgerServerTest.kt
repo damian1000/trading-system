@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit
 
 /** The server against real loopback HTTP: routing, content types, the state JSON, readiness, and the SSE push. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class DashboardServerTest {
+class LedgerServerTest {
     private class InMemoryStore : PositionStore {
         private val positions = HashMap<String, Position>()
 
@@ -83,7 +83,7 @@ class DashboardServerTest {
             exposureReport = { null },
             reconciliation = { Reconciliation.of(LedgerSnapshot(null, emptyList()), emptyMap(), System.currentTimeMillis()) },
         )
-    private val server = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0, readiness = readiness)
+    private val server = LedgerServer(capture, broadcaster, port = 0, readiness = readiness)
     private val client = HttpClient.newHttpClient()
 
     @BeforeAll
@@ -111,14 +111,6 @@ class DashboardServerTest {
     }
 
     @Test
-    fun `serves the privacy notice`() {
-        val response = get("/privacy")
-        assertEquals(200, response.statusCode())
-        assertEquals("text/html; charset=utf-8", response.headers().firstValue("Content-Type").get())
-        assertTrue(response.body().contains("Privacy"), response.body())
-    }
-
-    @Test
     fun `readyz answers 503 with the failing component named until the pipeline is healthy`() {
         // The consumer thread exists but has not polled with an assignment yet.
         val notReady = get("/readyz")
@@ -134,15 +126,16 @@ class DashboardServerTest {
         assertTrue(ready.body().contains(""""database":{"ok":true}"""), ready.body())
     }
 
+    /**
+     * This service serves data. The screen moved to the trading desk, and these paths going with
+     * it is the point of the change — a stray asset route left behind would mean two places still
+     * claimed to own the page.
+     */
     @Test
-    fun `serves the UI with its content types`() {
-        val index = get("/")
-        assertEquals(200, index.statusCode())
-        assertEquals("text/html; charset=utf-8", index.headers().firstValue("Content-Type").get())
-        assertTrue(index.body().contains("TRADING SYSTEM"))
-
-        assertEquals("text/css; charset=utf-8", get("/app.css").headers().firstValue("Content-Type").get())
-        assertEquals("text/javascript; charset=utf-8", get("/app.js").headers().firstValue("Content-Type").get())
+    fun `serves no page - every UI path is a 404`() {
+        for (path in listOf("/", "/privacy", "/app.css", "/app.js", "/index.html")) {
+            assertEquals(404, get(path).statusCode(), path)
+        }
     }
 
     @Test
@@ -176,12 +169,12 @@ class DashboardServerTest {
 
     @Test
     fun `HEAD answers every GET route with the GET's status and headers, minus the body`() {
-        for (path in listOf("/", "/healthz", "/readyz", "/privacy", "/app.css", "/app.js", "/api/state")) {
+        for (path in listOf("/", "/healthz", "/readyz", "/metrics", "/api/state")) {
             val head = head(path)
             assertEquals(get(path).statusCode(), head.statusCode(), path)
             assertEquals("", head.body(), path)
         }
-        assertEquals("text/html; charset=utf-8", head("/").headers().firstValue("Content-Type").get())
+        assertEquals("application/json", head("/api/state").headers().firstValue("Content-Type").get())
     }
 
     @Test
@@ -203,7 +196,7 @@ class DashboardServerTest {
 
     @Test
     fun `a server wired without a readiness probe reports plain readiness`() {
-        val bare = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0)
+        val bare = LedgerServer(capture, broadcaster, port = 0)
         bare.start()
         try {
             val response =
@@ -222,7 +215,7 @@ class DashboardServerTest {
     // status line — the client sees a connection-level failure, which is the documented contract.
     @Test
     fun `requests beyond the thread cap are refused rather than queued`() {
-        val bounded = DashboardServer(capture, broadcaster, WebAssets.load(), port = 0, maxPoolThreads = 2)
+        val bounded = LedgerServer(capture, broadcaster, port = 0, maxPoolThreads = 2)
         bounded.start()
         val streams = mutableListOf<HttpURLConnection>()
         try {

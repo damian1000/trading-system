@@ -8,7 +8,7 @@ import com.damianhoward.tradingsystem.position.PositionBook
 import com.damianhoward.tradingsystem.position.PositionStore
 import com.damianhoward.tradingsystem.position.RecordOutcome
 import com.damianhoward.tradingsystem.pricing.RiskGateway
-import com.damianhoward.tradingsystem.view.DashboardSnapshot
+import com.damianhoward.tradingsystem.view.LedgerSnapshot
 import com.damianhoward.tradingsystem.web.Broadcaster
 import java.util.concurrent.atomic.AtomicLong
 
@@ -69,9 +69,9 @@ class TradeCapture(
     }
 
     /** The current state, repriced on request — every position, each in its own market. */
-    fun snapshot(): DashboardSnapshot {
+    fun snapshot(): LedgerSnapshot {
         val positions = book.all()
-        return DashboardSnapshot(
+        return LedgerSnapshot(
             positions = positions,
             book = risk.bookReport(positions, opens::openFor),
             exposure = exposureView.report(),

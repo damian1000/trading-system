@@ -4,15 +4,20 @@
 [![CodeQL](https://github.com/damianhoward/trading-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/damianhoward/trading-system/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/damianhoward/trading-system/graph/badge.svg)](https://codecov.io/gh/damianhoward/trading-system)
 
-Post-trade integration over the [orderbook](https://github.com/damianhoward/orderbook) fill stream:
-consumes fills off Kafka into a durable fill ledger in an Oracle Autonomous Database, derives net
-positions in the same transaction, reprices the book through the
-[risk-engine](https://github.com/damianhoward/risk-engine) library, and serves a live
-positions/risk/PnL dashboard.
+The book of record. Post-trade integration over the
+[orderbook](https://github.com/damianhoward/orderbook) fill stream: consumes fills off Kafka into a
+durable fill ledger in an Oracle Autonomous Database, derives net positions in the same
+transaction, reprices the book through the
+[risk-engine](https://github.com/damianhoward/risk-engine) library, and publishes the result as
+JSON and an SSE stream.
 
-**▶ Live: https://trading.damianhoward.com** — submit an order that crosses on
+This service has no front end. It serves data; the screen that renders it is the Trading tab of the
+[trading desk](https://github.com/damianhoward/trading-desk), which is where it is looked at.
+Keeping a page here as well would mean two places claiming to own one screen.
+
+**▶ Live: https://desk.damianhoward.com/?tab=trading** — submit an order that crosses on
 [the live order book](https://orderbook.damianhoward.com) and watch the position, valuation,
-VaR, and day PnL update here as the fill arrives.
+VaR, and day PnL update as the fill arrives.
 
 ```
 orderbook.fills (Kafka) ──┬─► FillConsumer (seek from ledger) ──► TradeCapture ──► fill ledger + positions (Oracle, one txn)
@@ -20,7 +25,7 @@ orderbook.fills (Kafka) ──┬─► FillConsumer (seek from ledger) ──�
                           │        ▼ on poison (parse failure) only            ▼ every applied fill
                           │  orderbook.fills.DLT (confirmed)          RiskGateway (risk-engine)
                           │                                                    │
-                          │                                     DashboardServer ──► SSE ──► browser
+                          │                                        LedgerServer ──► JSON + SSE ──► desk
                           │                                                    ▲
                           └─► FillConsumer (seek from ledger) ──► BreachDetector
 ```
@@ -42,7 +47,7 @@ corrupt the positions, so application is idempotent at the database:
   `(source_topic, source_partition, source_offset)`, and the `positions` row moves by the fill's
   signed size **in the same transaction**. A crash can never persist one without the other.
 - A replayed record hits the ledger's primary key (ORA-00001), is reported as a duplicate, and
-  changes nothing. The dashboard counts these under "Replays dropped".
+  changes nothing. The desk counts these under "Replays dropped".
 - The producer's `execId` is stored under its own unique index: coordinates identify a
   _record_, `execId` identifies the _execution_, so the same economic fill republished at new
   coordinates — a dead-letter replay, a redelivery through another topic — is still a
@@ -82,7 +87,7 @@ failures deserve opposite treatment:
   DLT, or ahead of the committed offset; never in none of those places.
 - Dead-lettered records carry the untouched original payload plus `dlt.error.*` and
   `dlt.source.*` headers (exception, source topic/partition/offset) for inspection and replay.
-  The dashboard's status bar flags a non-zero dead-letter count.
+  The desk's status bar flags a non-zero dead-letter count.
 
 ### Dead-letter replay
 
@@ -93,7 +98,7 @@ headers untouched, while still-malformed records stay on the DLT. Every send is 
 logged with its DLT coordinates. A replayed copy lands at new stream coordinates, but its
 payload keeps its `execId`, so the ledger recognises a second replay of the same execution as a
 duplicate — replay is idempotent for any record carrying the id. Only pre-`execId` records need
-the older discipline: replay once, then verify the dashboard's position and dead-letter counts.
+the older discipline: replay once, then verify the desk's position and dead-letter counts.
 
 The fill schema is orderbook's versioned egress JSON (`v`, `execId`, `symbol`, `price`, `size`,
 `makerOrderId`, `takerOrderId`, `aggressor`, `ts`), parsed strictly — an unknown schema version
@@ -113,7 +118,7 @@ Flyway.
 A second `FillConsumer` feeds `BreachDetector`, an independent exposure view over the same fill
 stream — it never reads the position book — watching two ceilings on every fill: absolute net
 position and notional (|net quantity| × last price). Crossing a ceiling in either direction
-records a breach or clear event, stamped with the fill's own timestamp; the dashboard shows
+records a breach or clear event, stamped with the fill's own timestamp; the desk shows
 current utilisation per symbol and the recent event history.
 
 **It detects breaches; it does not prevent them.** Every fill it sees has already happened, so a
@@ -131,7 +136,7 @@ Exposure state is restart-safe through the fill ledger, exactly like the positio
 startup the detector replays the persisted fills (rebuilding exposures **and** the breach
 history — events carry each fill's own time), and the consumer attaches to the live stream past
 the ledger's high-water mark. Both views resume from the same durable truth after a restart,
-the dashboard's `sync` block says whether they have read to the same stream position since, and
+the snapshot's `sync` block says whether they have read to the same stream position since, and
 `/readyz` refuses to call the service ready when they stay apart.
 
 Malformed records on this path are counted and skipped rather than dead-lettered — the positions
@@ -155,7 +160,7 @@ latest trading day (UTC, by the fill's own timestamp), derived purely from the l
 built the book — so a restart warms the same opens back and the PnL clock survives the process.
 A symbol with no fill on its latest day carries no PnL claim rather than a zero.
 
-## Dashboard and operational truth
+## What it publishes, and operational truth
 
 A dependency-free JDK `HttpServer`: `GET /api/state` returns the current snapshot as JSON and
 `GET /api/stream` is an SSE feed pushing a fresh snapshot on every fill. The front end is a thin
@@ -229,7 +234,7 @@ fatal error, and the process exits so systemd restarts it into a safe replay.
 | `LIMIT_MAX_POSITION`                 | `50`                             | Absolute net position ceiling      |
 | `LIMIT_MAX_NOTIONAL`                 | `5000`                           | Notional exposure ceiling          |
 | `DB_URL` / `DB_USER` / `DB_PASSWORD` | required                         | Oracle connection (wallet TNS URL) |
-| `PORT`                               | `8082`                           | Dashboard HTTP port                |
+| `PORT`                               | `8082`                           | HTTP port (JSON, SSE, health)      |
 
 Neither consumer takes a group id — both derive their start position from the fill ledger.
 
