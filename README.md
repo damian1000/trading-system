@@ -1,8 +1,8 @@
-# trading-system
+# position-ledger
 
-[![CI](https://github.com/damianhoward/trading-system/actions/workflows/ci.yml/badge.svg)](https://github.com/damianhoward/trading-system/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/damianhoward/trading-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/damianhoward/trading-system/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/damianhoward/trading-system/graph/badge.svg)](https://codecov.io/gh/damianhoward/trading-system)
+[![CI](https://github.com/damianhoward/position-ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/damianhoward/position-ledger/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/damianhoward/position-ledger/actions/workflows/codeql.yml/badge.svg)](https://github.com/damianhoward/position-ledger/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/damianhoward/position-ledger/graph/badge.svg)](https://codecov.io/gh/damianhoward/position-ledger)
 
 The book of record. Post-trade integration over the
 [orderbook](https://github.com/damianhoward/orderbook) fill stream: consumes fills off Kafka into a
@@ -91,7 +91,7 @@ failures deserve opposite treatment:
 
 ### Dead-letter replay
 
-`trading-system replay-dlt` (the same binary, run with the service's environment) replays
+`position-ledger replay-dlt` (the same binary, run with the service's environment) replays
 dead-lettered records back onto the fills topic: records whose payload now parses — a fill
 dead-lettered by a since-fixed defect — are republished with their key, payload, and provenance
 headers untouched, while still-malformed records stay on the DLT. Every send is confirmed and

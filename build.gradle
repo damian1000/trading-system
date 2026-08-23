@@ -1,5 +1,6 @@
 // The integration context: consumes orderbook's fill stream off Kafka, maintains positions in
-// the Autonomous DB, reprices them through risk-engine, and serves a live dashboard. Matching
+// the Autonomous DB, reprices them through risk-engine, and publishes the result as JSON and an
+// SSE stream. No front end — the screen that renders this lives on the trading desk. Matching
 // and pricing are library dependencies (JitPack tags), not code that lives here.
 plugins {
     id 'com.damianhoward.kotlin-conventions' version '0.5.1'
@@ -10,8 +11,8 @@ group = 'com.damianhoward'
 version = '1.0.0'
 
 application {
-    applicationName = 'trading-system'
-    mainClass = 'com.damianhoward.tradingsystem.MainKt'
+    applicationName = 'position-ledger'
+    mainClass = 'com.damianhoward.positionledger.MainKt'
 }
 
 repositories {
@@ -41,4 +42,4 @@ dependencies {
 // Only the process entry point (MainKt — main() wires the real Kafka/DB/port and blocks) is
 // excluded. The rest — consumer loop, retry/DLT, positions, persistence, risk adapter, web —
 // is exercised by tests and counted.
-coverageExcludes = ['**/tradingsystem/MainKt.class']
+coverageExcludes = ['**/positionledger/MainKt.class']

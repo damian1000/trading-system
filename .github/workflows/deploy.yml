@@ -14,7 +14,7 @@ jobs:
   deploy:
     uses: damianhoward/.github/.github/workflows/deploy.yml@main
     with:
-      app: trading-system
+      app: position-ledger
       url: https://trading.damianhoward.com
       health-port: "8082"
       # Longer than the shared default, and longer than the 30s coherence grace in Readiness:
