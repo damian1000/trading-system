@@ -26,4 +26,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = 'trading-system'
+rootProject.name = 'position-ledger'

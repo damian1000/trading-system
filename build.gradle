@@ -10,8 +10,8 @@ group = 'com.damianhoward'
 version = '1.0.0'
 
 application {
-    applicationName = 'trading-system'
-    mainClass = 'com.damianhoward.tradingsystem.MainKt'
+    applicationName = 'position-ledger'
+    mainClass = 'com.damianhoward.positionledger.MainKt'
 }
 
 repositories {
@@ -41,4 +41,4 @@ dependencies {
 // Only the process entry point (MainKt — main() wires the real Kafka/DB/port and blocks) is
 // excluded. The rest — consumer loop, retry/DLT, positions, persistence, risk adapter, web —
 // is exercised by tests and counted.
-coverageExcludes = ['**/tradingsystem/MainKt.class']
+coverageExcludes = ['**/positionledger/MainKt.class']
