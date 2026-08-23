@@ -43,7 +43,7 @@ data class ViewTotals(
  * A projection of the fill stream that the conservation check judges. A fixed set, which is what
  * lets the metrics label be bounded by configuration rather than by data.
  *
- * [POSITIONS] is the `positions` table; [POSITION_BOOK] is the in-memory mirror the dashboard and
+ * [POSITIONS] is the `positions` table; [POSITION_BOOK] is the in-memory mirror the desk and
  * the risk report are priced from; [EXPOSURE] is the detector's independently-derived
  * exposure map.
  */
@@ -116,7 +116,7 @@ data class ViewVerdict(
  *
  *  - [View.POSITIONS] can drift through a restore to the wrong point, a manual correction, a
  *    migration that touches one table, or a later change to the merge.
- *  - [View.POSITION_BOOK] is the in-memory mirror. Both the dashboard and the risk report are
+ *  - [View.POSITION_BOOK] is the in-memory mirror. Both the desk and the risk report are
  *    built from it rather than from the table, so a mirror that has drifted produces a wrong
  *    valuation, wrong Greeks and wrong VaR with nothing in the service to contradict them.
  *  - [View.EXPOSURE] never reads the position book by design — that independence is the whole point

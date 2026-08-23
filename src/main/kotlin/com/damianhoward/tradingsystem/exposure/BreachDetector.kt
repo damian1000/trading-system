@@ -8,7 +8,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.math.abs
 
-/** What the dashboard reads; [BreachDetector] is the production implementation. */
+/** What the desk reads; [BreachDetector] is the production implementation. */
 fun interface ExposureView {
     fun report(): ExposureReport
 }

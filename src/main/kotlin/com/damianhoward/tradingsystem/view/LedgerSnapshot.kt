@@ -6,7 +6,7 @@ import com.damianhoward.tradingsystem.position.Position
 import com.damianhoward.tradingsystem.pricing.BookRisk
 
 /**
- * Everything the dashboard renders, at one moment: the booked [positions], the [book] risk —
+ * Everything the desk renders, at one moment: the booked [positions], the [book] risk —
  * one report per position plus the sums that are honest to sum (null before anything has
  * traded) — the [exposure] view the detector derives, and where each consumer path sits on the
  * stream. The two paths are independent consumers, so the `sync` block states whether they
@@ -15,7 +15,7 @@ import com.damianhoward.tradingsystem.pricing.BookRisk
  * `/api/state` and the SSE stream both carry; `v:2` replaced the single-instrument `report`
  * with the whole-book shape.
  */
-data class DashboardSnapshot(
+data class LedgerSnapshot(
     val positions: List<Position>,
     val book: BookRisk?,
     val exposure: ExposureReport,

@@ -40,7 +40,7 @@ data class SymbolExposure(
 /**
  * The detector's whole view at one moment: per-symbol exposures, the bounded breach/clear history
  * (newest first), how many malformed records were skipped, and how far along the stream this view
- * has read ([progress], null before the first fill). [toJson] follows the dashboard's wire
+ * has read ([progress], null before the first fill). [toJson] follows the snapshot's wire
  * convention — one line, exact decimals as plain JSON numbers.
  */
 data class ExposureReport(

@@ -13,18 +13,19 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /**
- * HTTP transport for the dashboard: the static UI, the current state as JSON, and an SSE stream
- * that pushes a fresh snapshot on every fill. Plumbing only — every number comes from
- * [TradeCapture]'s snapshot over risk-engine's calculators, and the front end is a thin renderer
- * of [com.damianhoward.tradingsystem.view.DashboardSnapshot.toJson]. JDK [HttpServer] on a
- * request pool capped at [maxPoolThreads], no web framework; each SSE stream pins one pool thread
- * for its connection's lifetime, and requests beyond the cap are refused at the connection rather
- * than queued.
+ * HTTP transport for the ledger: the current state as JSON, an SSE stream that pushes a fresh
+ * snapshot on every fill, and the health and metrics endpoints. No HTML — this service serves data,
+ * and the screen that renders it belongs to the trading desk, which is where it is looked at.
+ *
+ * Plumbing only: every number comes from [TradeCapture]'s snapshot over risk-engine's calculators,
+ * and [com.damianhoward.tradingsystem.view.LedgerSnapshot.toJson] is the whole wire contract.
+ * JDK [HttpServer] on a request pool capped at [maxPoolThreads], no web framework; each SSE stream
+ * pins one pool thread for its connection's lifetime, and requests beyond the cap are refused at
+ * the connection rather than queued.
  */
-class DashboardServer(
+class LedgerServer(
     private val capture: TradeCapture,
     private val broadcaster: Broadcaster,
-    private val assets: WebAssets,
     private val port: Int,
     private val readiness: Readiness? = null,
     private val maxPoolThreads: Int = 64,
@@ -54,14 +55,19 @@ class DashboardServer(
         server.executor = executor
         server.createContext("/", ::route)
         server.start()
-        println("Trading system dashboard listening on :$boundPort")
+        println("Position ledger listening on :$boundPort")
     }
 
     /** The port actually bound — differs from the requested one when 0 (ephemeral) was asked for. */
     val boundPort: Int get() = server.address.port
 
-    /** Stops accepting connections and shuts down the request pool this server created. */
+    /**
+     * Stops accepting connections and shuts down the request pool this server created. Safe on a
+     * server that never started: the shutdown hook runs whatever happened, and a failed bind would
+     * otherwise raise an uninitialised-property error that buries the bind error underneath it.
+     */
     fun stop() {
+        if (!::server.isInitialized) return
         server.stop(0)
         executor.shutdownNow()
     }
@@ -71,16 +77,12 @@ class DashboardServer(
             "/healthz" -> get(exchange) { respond(exchange, 200, "text/plain", "ok") }
             "/readyz" -> get(exchange) { ready(exchange) }
             // Prometheus text, from the same snapshot /readyz renders, so the two cannot disagree.
-            // Empty rather than 404 where readiness is unwired (tests and the dashboard-only mode):
-            // a scrape target that exists and reports nothing is a state a collector understands.
+            // Empty rather than 404 where readiness is unwired (tests): a scrape target that exists
+            // and reports nothing is a state a collector understands.
             "/metrics" ->
                 get(exchange) {
                     respond(exchange, 200, "text/plain; version=0.0.4; charset=utf-8", readiness?.metrics() ?: "")
                 }
-            "/" -> get(exchange) { respond(exchange, 200, "text/html; charset=utf-8", assets.indexHtml) }
-            "/privacy" -> get(exchange) { respond(exchange, 200, "text/html; charset=utf-8", assets.privacyHtml) }
-            "/app.css" -> get(exchange) { respond(exchange, 200, "text/css; charset=utf-8", assets.appCss) }
-            "/app.js" -> get(exchange) { respond(exchange, 200, "text/javascript; charset=utf-8", assets.appJs) }
             "/api/state" -> get(exchange) { respond(exchange, 200, "application/json", capture.snapshot().toJson()) }
             "/api/stream" ->
                 get(exchange) {

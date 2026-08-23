@@ -19,9 +19,8 @@ import com.damianhoward.tradingsystem.position.View
 import com.damianhoward.tradingsystem.position.ViewTotals
 import com.damianhoward.tradingsystem.pricing.MarketAssumptions
 import com.damianhoward.tradingsystem.pricing.RiskGateway
-import com.damianhoward.tradingsystem.web.DashboardServer
+import com.damianhoward.tradingsystem.web.LedgerServer
 import com.damianhoward.tradingsystem.web.SseBroadcaster
-import com.damianhoward.tradingsystem.web.WebAssets
 import org.flywaydb.core.Flyway
 import java.sql.DriverManager
 import java.util.concurrent.Executors
@@ -30,9 +29,9 @@ import kotlin.system.exitProcess
 
 /**
  * Composition root: reads config, migrates the schema, warms both views from the fill ledger,
- * and wires fills → positions → risk → dashboard plus the independent exposure view over the same
- * topic, with a periodic check that the book still equals the fills behind it. Plumbing only —
- * every collaborator is constructed here and tested elsewhere.
+ * and wires fills → positions → risk → the state this service publishes, plus the independent
+ * exposure view over the same topic, with a periodic check that the book still equals the fills
+ * behind it. Plumbing only — every collaborator is constructed here and tested elsewhere.
  *
  * A consumer that dies on an unexpected exception exits the process: continuing would mean
  * committing past records that are in neither the ledger nor the DLT, and systemd's
@@ -141,7 +140,7 @@ fun main(args: Array<String>) {
             exposureReport = detector::report,
             reconciliation = reconciler::latest,
         )
-    val server = DashboardServer(capture, broadcaster, WebAssets.load(), config.port, readiness)
+    val server = LedgerServer(capture, broadcaster, config.port, readiness)
 
     Runtime.getRuntime().addShutdownHook(
         Thread {

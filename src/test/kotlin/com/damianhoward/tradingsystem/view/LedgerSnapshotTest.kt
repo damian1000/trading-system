@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
-class DashboardSnapshotTest {
+class LedgerSnapshotTest {
     private val emptyExposure = ExposureReport(RiskLimits(50, BigDecimal("5000")), emptyList(), emptyList(), 0)
     private val gateway = RiskGateway(RiskReportAssembler.standard(), MarketAssumptions.default())
 
@@ -24,7 +24,7 @@ class DashboardSnapshotTest {
                 """"exposure":{"maxPosition":50,"maxNotional":5000,"symbols":[],"events":[],""" +
                 """"malformed":0,"breaches":0,"progress":null},""" +
                 """"sync":{"positions":null,"exposure":null,"coherent":true,"duplicatesDropped":0,"deadLetters":0}}""",
-            DashboardSnapshot(emptyList(), null, emptyExposure).toJson(),
+            LedgerSnapshot(emptyList(), null, emptyExposure).toJson(),
         )
     }
 
@@ -37,7 +37,7 @@ class DashboardSnapshotTest {
             )
         val book = gateway.bookReport(positions) { BigDecimal("100.00") }
 
-        val json = DashboardSnapshot(positions, book, emptyExposure).toJson()
+        val json = LedgerSnapshot(positions, book, emptyExposure).toJson()
 
         assertTrue(
             json.startsWith(
@@ -58,7 +58,7 @@ class DashboardSnapshotTest {
     fun `matching stream positions are coherent, diverged ones are flagged`() {
         val limitsAt = emptyExposure.copy(progress = ConsumerProgress(7, 1000))
         val together =
-            DashboardSnapshot(emptyList(), null, limitsAt, ConsumerProgress(7, 1000), duplicates = 2, deadLetters = 1)
+            LedgerSnapshot(emptyList(), null, limitsAt, ConsumerProgress(7, 1000), duplicates = 2, deadLetters = 1)
         assertTrue(together.coherent)
         assertTrue(
             together.toJson().contains(
@@ -68,21 +68,21 @@ class DashboardSnapshotTest {
             together.toJson(),
         )
 
-        val apart = DashboardSnapshot(emptyList(), null, limitsAt, ConsumerProgress(9, 3000))
+        val apart = LedgerSnapshot(emptyList(), null, limitsAt, ConsumerProgress(9, 3000))
         assertFalse(apart.coherent, "the two views describe different stream positions")
         assertTrue(apart.toJson().contains(""""coherent":false"""))
     }
 
     @Test
     fun `one warmed view beside one empty view is not coherent`() {
-        val snapshot = DashboardSnapshot(emptyList(), null, emptyExposure, ConsumerProgress(7, 1000))
+        val snapshot = LedgerSnapshot(emptyList(), null, emptyExposure, ConsumerProgress(7, 1000))
         assertFalse(snapshot.coherent)
     }
 
     @Test
     fun `symbols are JSON-escaped`() {
         val position = Position("""A"B\C""", 1, BigDecimal("1"), 0)
-        val json = DashboardSnapshot(listOf(position), null, emptyExposure).toJson()
+        val json = LedgerSnapshot(listOf(position), null, emptyExposure).toJson()
         assertTrue(json.contains(""""symbol":"A\"B\\C""""), json)
     }
 }
